@@ -1,0 +1,6 @@
+/target/
+*.log
+*.tmp
+.env
+.env.*
+/config.local.toml

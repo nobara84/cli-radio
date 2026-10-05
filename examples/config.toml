@@ -1,0 +1,10 @@
+volume = 85
+
+[network]
+# An HTTP proxy can carry both HTTP and HTTPS streams.
+# Empty proxy: inherit environment variables.
+proxy = ""
+proxy_username = ""
+proxy_password = ""
+# Omit to inherit NO_PROXY/no_proxy; use "" to disable bypass.
+# no_proxy = "localhost,127.0.0.1,.example.org"
