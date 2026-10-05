@@ -75,18 +75,22 @@ fn bundled_nine_stations_parse_exact_names_urls_and_unique_ids() {
     assert_ne!(stations[0].id, defaults::bundled().unwrap()[0].id);
 }
 #[test]
-fn first_run_persists_defaults_with_stable_personal_ids() {
+fn first_run_is_empty_and_bootstrap_persists_personal_ids() {
     let (mut store, _temp) = fixture();
-    let (_, first) = store.load();
-    assert_eq!(first.len(), 9);
-    assert!(store.data_dir.join("stations.toml").exists());
+    let (_, empty) = store.load();
+    assert!(empty.is_empty());
+    assert!(!store.data_dir.join("stations.toml").exists());
     assert!(!store.config_dir.join("config.toml").exists());
+    assert_eq!(store.import_bundled().unwrap().imported, 9);
+    let (_, first) = store.load();
     let (_, second) = store.load();
+    assert_eq!(first.len(), 9);
     assert_eq!(
         first.iter().map(|s| s.id).collect::<Vec<_>>(),
         second.iter().map(|s| s.id).collect::<Vec<_>>()
     );
 }
+
 #[test]
 fn existing_personal_database_is_unchanged() {
     let (mut store, _temp) = fixture();
@@ -108,12 +112,21 @@ fn existing_personal_database_is_unchanged() {
 #[test]
 fn deleted_defaults_and_explicitly_empty_database_stay_deleted() {
     let (mut store, _temp) = fixture();
+    store.import_bundled().unwrap();
     let (config, mut stations) = store.load();
     let removed = stations.remove(0).id;
     store.save(&config, &stations).unwrap();
     let (_, reloaded) = store.load();
     assert_eq!(reloaded.len(), 8);
     assert!(reloaded.iter().all(|s| s.id != removed));
+    assert_eq!(
+        store.import_bundled().unwrap(),
+        ImportReport {
+            imported: 1,
+            skipped: 8
+        }
+    );
+    assert_eq!(store.load().1.len(), 9);
     store.save(&config, &[]).unwrap();
     assert!(store.load().1.is_empty());
 }
@@ -138,7 +151,7 @@ fn import_adds_only_missing_urls_preserves_existing_favorites_and_config() {
         .unwrap();
     let config_before = fs::read(store.config_dir.join("config.toml")).unwrap();
     assert_eq!(
-        store.import_defaults().unwrap(),
+        store.import_bundled().unwrap(),
         ImportReport {
             imported: 8,
             skipped: 1
@@ -160,7 +173,7 @@ fn import_adds_only_missing_urls_preserves_existing_favorites_and_config() {
     );
     let before = fs::read(store.data_dir.join("stations.toml")).unwrap();
     assert_eq!(
-        store.import_defaults().unwrap(),
+        store.import_bundled().unwrap(),
         ImportReport {
             imported: 0,
             skipped: 9
@@ -197,13 +210,14 @@ fn damaged_personal_database_is_not_reseeded_or_imported_over() {
     fs::write(&path, "stations = [broken").unwrap();
     assert!(store.load().1.is_empty());
     assert!(!store.writable);
-    assert!(store.import_defaults().is_err());
+    assert!(store.import_bundled().is_err());
     assert_eq!(fs::read_to_string(path).unwrap(), "stations = [broken");
 }
 fn import_command(store: &Store) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_cli-radio"));
     // Store::open adds cli-radio to each base; use separate roots for the CLI.
-    cmd.arg("--import-defaults")
+    cmd.env("PATH", store.state_dir.join("no-mpv"))
+        .arg("--bootstrap-stations")
         .env("XDG_CONFIG_HOME", &store.config_dir)
         .env("XDG_DATA_HOME", &store.data_dir)
         .env("XDG_STATE_HOME", &store.state_dir);
@@ -214,15 +228,16 @@ fn cli_import_runs_without_terminal_and_is_idempotent() {
     let (store, _temp) = fixture();
     let first = import_command(&store).output().unwrap();
     assert!(first.status.success());
+    assert!(!first.stdout.contains(&27));
     assert_eq!(
         String::from_utf8(first.stdout).unwrap(),
-        "Imported 9 default stations.\nSkipped 0 existing stations.\n"
+        "Imported 9 bundled stations.\nSkipped 0 existing stations.\n"
     );
     let second = import_command(&store).output().unwrap();
     assert!(second.status.success());
     assert_eq!(
         String::from_utf8(second.stdout).unwrap(),
-        "Imported 0 default stations.\nSkipped 9 existing stations.\n"
+        "Imported 0 bundled stations.\nSkipped 9 existing stations.\n"
     );
 }
 #[test]

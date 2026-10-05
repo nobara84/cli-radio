@@ -13,6 +13,13 @@ use uuid::Uuid;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    pub language: crate::i18n::Language,
+    pub random_mode: bool,
+    #[serde(
+        default = "crate::random::default_hours",
+        deserialize_with = "crate::random::deserialize_hours"
+    )]
+    pub random_interval_hours: u64,
     pub volume: u8,
     pub last_station: Option<Uuid>,
     pub network: Network,
@@ -20,6 +27,9 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            language: crate::i18n::Language::German,
+            random_mode: false,
+            random_interval_hours: crate::random::DEFAULT_HOURS,
             volume: 85,
             last_station: None,
             network: Network::default(),
@@ -64,37 +74,11 @@ impl Store {
         Ok(s)
     }
     pub fn load(&mut self) -> (Config, Vec<Station>) {
-        let path = self.data_dir.join("stations.toml");
-        // An existing empty database is intentional, never a reason to reseed.
-        let missing =
-            matches!(fs::symlink_metadata(&path), Err(e) if e.kind() == io::ErrorKind::NotFound);
-        let (config, mut stations) = self.load_existing();
-        if missing && self.writable {
-            match crate::defaults::bundled() {
-                Ok(defaults) => {
-                    stations = defaults;
-                    match self.write_stations(&stations, false) {
-                        Ok(()) => {}
-                        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-                            return self.load_existing();
-                        }
-                        Err(_) => {
-                            self.warnings.push("Cannot initialize personal station list; defaults loaded for this session only".into());
-                            self.writable = false;
-                        }
-                    }
-                }
-                Err(_) => {
-                    self.warnings
-                        .push("Invalid bundled station list; personal files preserved".into());
-                    self.writable = false;
-                }
-            }
-        }
-        (config, stations)
+        // Normal startup never imports bundled stations, even on first run.
+        self.load_existing()
     }
-    pub fn import_defaults(&mut self) -> io::Result<crate::defaults::ImportReport> {
-        // Unlike normal startup, do not first seed: fresh imports report 9 added.
+    pub fn import_bundled(&mut self) -> io::Result<crate::defaults::ImportReport> {
+        // The explicit maintainer import reuses URL deduplication and atomic writes.
         let missing = matches!(fs::symlink_metadata(self.data_dir.join("stations.toml")), Err(e) if e.kind() == io::ErrorKind::NotFound);
         let (_, mut stations) = self.load_existing();
         if !self.writable {

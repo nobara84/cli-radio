@@ -5,6 +5,7 @@ use crate::{
     reconnect::{Phase, Reconnect},
     stations::{Station, filtered, validate},
 };
+use rand::seq::IteratorRandom;
 use std::{collections::HashMap, time::Instant};
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -27,6 +28,7 @@ pub enum Mode {
     Delete(Uuid),
 }
 pub struct App {
+    pub random_timer: crate::random::RandomTimer,
     pub disconnects: u64,
     pub session_started: Instant,
     pub config: Config,
@@ -62,18 +64,68 @@ impl App {
         }
     }
     pub async fn play(&mut self) {
+        self.play_at(Instant::now()).await;
+    }
+    pub async fn play_at(&mut self, now: Instant) {
         if let Some(station) = self.selected_station().cloned() {
-            self.config.last_station = Some(station.id);
-            self.active = Some(station);
-            self.reconnect.play(Instant::now());
-            self.metadata = Metadata::default();
-            self.log
-                .event("station selected", self.reconnect.generation);
-            self.launch().await;
-            self.save();
+            self.start_station(station, now).await;
         } else {
             self.message = "No station selected. Press a to add a station.".into();
         }
+    }
+    async fn start_station(&mut self, station: Station, now: Instant) {
+        self.config.last_station = Some(station.id);
+        self.active = Some(station);
+        self.random_timer.start(now);
+        self.reconnect.play(now);
+        self.metadata = Metadata::default();
+        self.log
+            .event("station selected", self.reconnect.generation);
+        self.launch().await;
+        self.save();
+    }
+    pub fn toggle_random(&mut self, now: Instant) {
+        self.config.random_mode = !self.config.random_mode;
+        if self.config.random_mode && self.reconnect.desired {
+            self.random_timer.start(now);
+        }
+        self.save();
+    }
+    pub async fn random_tick(&mut self, now: Instant) -> bool {
+        if !self.config.random_mode
+            || !self.reconnect.desired
+            || self.reconnect.phase != Phase::Playing
+            || !self
+                .random_timer
+                .due(now, self.config.random_interval_hours)
+        {
+            return false;
+        }
+        let Some(active) = &self.active else {
+            return false;
+        };
+        let station = self
+            .stations
+            .iter()
+            .filter(|s| s.id != active.id)
+            .choose(&mut rand::rng())
+            .cloned();
+        if let Some(station) = station {
+            if let Some(index) = self
+                .visible()
+                .iter()
+                .position(|&i| self.stations[i].id == station.id)
+            {
+                self.selected = index;
+            }
+            self.log.event(
+                "intentional random station switch",
+                self.reconnect.generation,
+            );
+            self.start_station(station, now).await;
+            return true;
+        }
+        false
     }
     pub async fn launch(&mut self) {
         let Some(station) = &self.active else {
@@ -110,6 +162,7 @@ impl App {
         }
     }
     pub async fn stop(&mut self) {
+        self.random_timer.stop();
         self.reconnect.stop();
         self.metadata = Metadata::default();
         let _ = self.controls.send(Control::Stop).await;

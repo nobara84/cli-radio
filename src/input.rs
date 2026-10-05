@@ -71,6 +71,11 @@ pub async fn handle(app: &mut App, key: KeyEvent) -> bool {
     }
     match key.code {
         KeyCode::Char('q') => return true,
+        KeyCode::Char('l') => {
+            app.config.language.toggle();
+            app.save();
+        }
+        KeyCode::Char('r') => app.toggle_random(std::time::Instant::now()),
         KeyCode::Down | KeyCode::Char('j') => {
             app.selected = (app.selected + 1).min(app.visible().len().saturating_sub(1))
         }

@@ -17,30 +17,35 @@ use tokio::sync::mpsc;
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let session_started = Instant::now();
-    let args: Vec<_> = std::env::args().collect();
-    if args.iter().any(|a| a == "--help" || a == "-h") {
-        println!(
-            "cli-radio — terminal web radio\nRun without arguments to open the TUI.\n--import-defaults: add missing bundled stations without opening the TUI.\nEnter Play · Space Stop/Play · a Add · e Edit · d Delete\nf Favorite · / Search · +/- Volume · q/Ctrl+C Quit"
-        );
+    let args: Vec<_> = std::env::args().skip(1).collect();
+    let action = match cli_radio::cli::parse(&args) {
+        Ok(action) => action,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+    };
+    if action == cli_radio::cli::Action::Help {
+        print!("{}", cli_radio::cli::HELP);
         return Ok(());
     }
-    if args.iter().any(|a| a == "--version") {
+    if action == cli_radio::cli::Action::Version {
         println!("cli-radio {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
     let mut store = Store::open()?;
-    if args.iter().any(|a| a == "--import-defaults") {
-        match store.import_defaults() {
+    if action == cli_radio::cli::Action::BootstrapStations {
+        match store.import_bundled() {
             Ok(report) => {
                 println!(
-                    "Imported {} default stations.\nSkipped {} existing stations.",
+                    "Imported {} bundled stations.\nSkipped {} existing stations.",
                     report.imported, report.skipped
                 );
                 return Ok(());
             }
             Err(_) => {
                 eprintln!(
-                    "Default station import failed. Check XDG permissions and repair invalid TOML; existing files are preserved when validation fails."
+                    "Station import failed. Check XDG permissions and repair invalid TOML; existing files are preserved when validation fails."
                 );
                 std::process::exit(1);
             }
@@ -65,6 +70,7 @@ async fn main() -> io::Result<()> {
         })
         .unwrap_or(0);
     let mut app = App {
+        random_timer: cli_radio::random::RandomTimer::default(),
         disconnects: 0,
         session_started,
         config,
@@ -111,7 +117,7 @@ async fn main() -> io::Result<()> {
         tokio::select! {
             event = keys.next() => match event { Some(Ok(Event::Key(key))) if key.kind != KeyEventKind::Release => { if input::handle(&mut app, key).await { break Ok(()); } }, Some(Err(_)) | None => break Ok(()), _ => {} },
             event = events.recv() => { if let Some(event) = event { app.notice(event); } },
-            _ = tick.tick() => { if app.reconnect.tick(Instant::now()) { app.log.event("reconnect attempt", app.reconnect.generation); app.launch().await; } },
+            _ = tick.tick() => { let now = Instant::now(); app.random_tick(now).await; if app.reconnect.tick(now) { app.log.event("reconnect attempt", app.reconnect.generation); app.launch().await; } },
             _ = tokio::signal::ctrl_c() => break Ok(()),
             _ = terminate.recv() => break Ok(()),
         }

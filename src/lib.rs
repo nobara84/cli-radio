@@ -1,10 +1,13 @@
 pub mod app;
+pub mod cli;
 pub mod config;
 pub mod defaults;
+pub mod i18n;
 pub mod input;
 pub mod logging;
 pub mod network;
 pub mod player;
+pub mod random;
 pub mod reconnect;
 pub mod stations;
 pub mod terminal;

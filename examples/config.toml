@@ -1,4 +1,8 @@
 volume = 85
+language = "de"
+random_mode = false
+# Positive whole hours; missing/invalid values use 12. Restart after editing.
+random_interval_hours = 12
 
 [network]
 # An HTTP proxy can carry both HTTP and HTTPS streams.

@@ -1,5 +1,6 @@
 use crate::{
     app::{App, Mode},
+    i18n::Language,
     reconnect::Phase,
 };
 use ratatui::{
@@ -15,10 +16,12 @@ fn safe(text: &str) -> String {
 }
 pub fn draw(frame: &mut Frame, app: &App) {
     let area = frame.area();
+    let lang = app.config.language;
+    let footer = lang.footer(area.width);
     if area.width < 38 || area.height < 12 {
         frame.render_widget(
             Paragraph::new(
-                "CLI Radio\nTerminal too small (minimum 38×12).\nq: Quit / Ctrl+C: Quit",
+                lang.text("CLI Radio\nTerminal too small (minimum 38×12).\nq: Quit / Ctrl+C: Quit"),
             ),
             area,
         );
@@ -30,11 +33,12 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Constraint::Length(if compact { 1 } else { 3 }),
         Constraint::Min(4),
         Constraint::Length(message_height),
-        Constraint::Length(2),
+        Constraint::Length(footer.len() as u16),
     ])
     .split(area);
     let search = format!(
-        "Search: {}{}",
+        "{}: {}{}",
+        lang.text("Search"),
         safe(&app.search),
         if matches!(app.mode, Mode::Search) {
             " ▏"
@@ -59,7 +63,13 @@ pub fn draw(frame: &mut Frame, app: &App) {
             .constraints([Constraint::Percentage(33), Constraint::Percentage(67)])
             .split(rows[1])
     } else {
-        let list_height = if rows[1].height < 15 { 3 } else { 5 };
+        let list_height = if app.stations.is_empty() {
+            4
+        } else if rows[1].height < 15 {
+            3
+        } else {
+            5
+        };
         Layout::vertical([Constraint::Length(list_height), Constraint::Min(4)]).split(rows[1])
     };
     let items: Vec<_> = app
@@ -79,33 +89,42 @@ pub fn draw(frame: &mut Frame, app: &App) {
     } else {
         Some(app.selected.min(items.len() - 1))
     });
-    let list = List::new(items)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Stations · a: Add "),
-        )
-        .highlight_symbol("› ")
-        .highlight_style(
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
+    let station_block = Block::default().borders(Borders::ALL).title(format!(
+        " {} | a: {} ",
+        lang.text("Stations"),
+        lang.text("Add")
+    ));
+    if app.stations.is_empty() {
+        frame.render_widget(
+            Paragraph::new(format!(
+                "{}\n{}",
+                lang.text("No stations yet"),
+                lang.text("Press a to add a station.")
+            ))
+            .wrap(Wrap { trim: true })
+            .block(station_block),
+            columns[0],
         );
-    frame.render_stateful_widget(list, columns[0], &mut state);
+    } else {
+        let list = List::new(items)
+            .block(station_block)
+            .highlight_symbol("› ")
+            .highlight_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            );
+        frame.render_stateful_widget(list, columns[0], &mut state);
+    }
     now_playing(frame, app, columns[1]);
     frame.render_widget(
-        Paragraph::new(safe(&app.message))
+        Paragraph::new(safe(&lang.message(&app.message)))
             .style(Style::default().fg(Color::Yellow))
             .wrap(Wrap { trim: true }),
         rows[2],
     );
-    let help = if area.width < 65 {
-        "↑↓/jk Enter Play Space Stop +/- Vol\n/ Find f Fav a Add e Edit d Del q Quit"
-    } else {
-        "↑↓/jk Select · Enter Play · Space Stop/Play · +/- Vol\nf Fav · / Search · a Add · e Edit · d Delete · q Quit"
-    };
     frame.render_widget(
-        Paragraph::new(help).style(Style::default().fg(Color::Cyan)),
+        Paragraph::new(footer.join("\n")).style(Style::default().fg(Color::Cyan)),
         rows[3],
     );
     match &app.mode {
@@ -118,20 +137,22 @@ pub fn draw(frame: &mut Frame, app: &App) {
             let popup = centered(area, 80, 8);
             frame.render_widget(Clear, popup);
             let text = format!(
-                "{} Name: {}\n{} URL: {}\n\nTab: switch field · Enter: Save · Esc: Cancel",
+                "{} {}: {}\n{} URL: {}\n\n{}",
                 if !field { "›" } else { " " },
+                lang.text("Name"),
                 safe(name),
                 if *field { "›" } else { " " },
-                safe(url)
+                safe(url),
+                lang.text("Tab: switch field | Enter: Save | Esc: Cancel")
             );
             frame.render_widget(
                 Paragraph::new(text).wrap(Wrap { trim: true }).block(
                     Block::default()
                         .borders(Borders::ALL)
                         .title(if id.is_some() {
-                            " Edit Station "
+                            lang.text("Edit Station")
                         } else {
-                            " Add Station "
+                            lang.text("Add Station")
                         }),
                 ),
                 popup,
@@ -141,8 +162,12 @@ pub fn draw(frame: &mut Frame, app: &App) {
             let popup = centered(area, 55, 5);
             frame.render_widget(Clear, popup);
             frame.render_widget(
-                Paragraph::new("Delete selected station?\ny: Delete · n/Esc: Cancel")
-                    .block(Block::default().borders(Borders::ALL).title(" Confirm ")),
+                Paragraph::new(lang.text("Delete selected station?\ny: Delete | n/Esc: Cancel"))
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title(lang.text("Confirm")),
+                    ),
                 popup,
             );
         }
@@ -174,16 +199,17 @@ pub fn format_uptime(elapsed: std::time::Duration) -> String {
         clock
     }
 }
-fn volume_line(volume: u8, width: u16) -> String {
+fn volume_line(volume: u8, width: u16, lang: Language) -> String {
     let volume = volume.min(100);
-    let label = format!("Volume: {volume}%");
+    let name = lang.text("Volume");
+    let label = format!("{name}: {volume}%");
     let cells = usize::from(width).saturating_sub(label.len());
     if cells == 0 {
         return label;
     }
     let filled = cells * usize::from(volume) / 100;
     format!(
-        "Volume {}{} {volume}%",
+        "{name} {}{} {volume}%",
         "█".repeat(filled),
         "░".repeat(cells - filled)
     )
@@ -197,9 +223,14 @@ fn available(text: &str) -> String {
     }
 }
 fn now_playing(frame: &mut Frame, app: &App, area: Rect) {
+    let lang = app.config.language;
     let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Now Playing ");
+        .borders(if area.height < 8 {
+            Borders::TOP
+        } else {
+            Borders::ALL
+        })
+        .title(format!(" {} ", lang.text("Now Playing")));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.height == 0 || inner.width == 0 {
@@ -207,12 +238,17 @@ fn now_playing(frame: &mut Frame, app: &App, area: Rect) {
     }
     let now = Instant::now();
     let uptime = format_uptime(now.saturating_duration_since(app.session_started));
-    let stats = format!("Disconnects: {} · Uptime: {uptime}", app.disconnects);
+    let stats = format!(
+        "{}: {} · {}: {uptime}",
+        lang.text("Disconnects"),
+        app.disconnects,
+        lang.text("Uptime")
+    );
     let name = app
         .active
         .as_ref()
         .map(|s| safe(&s.name))
-        .unwrap_or_else(|| "Select a station · Enter to play".into());
+        .unwrap_or_else(|| lang.text("Select a station · Enter to play").into());
     let artist = available(&app.metadata.artist);
     let title = available(&app.metadata.title);
     let audio = format!(
@@ -220,11 +256,14 @@ fn now_playing(frame: &mut Frame, app: &App, area: Rect) {
         available(&app.metadata.codec),
         available(&app.metadata.bitrate)
     );
-    let status = match app.reconnect.phase {
-        Phase::Playing => "● Playing".into(),
-        Phase::Disconnected => "Connection lost".into(),
-        _ => app.reconnect.status(now),
-    };
+    let status = lang.status(&app.reconnect, now);
+    let random = lang.random_status(
+        app.config.random_mode,
+        &app.random_timer,
+        now,
+        app.config.random_interval_hours,
+        inner.width < 50,
+    );
     let status_style = Style::default()
         .fg(match app.reconnect.phase {
             Phase::Playing => Color::Green,
@@ -232,38 +271,45 @@ fn now_playing(frame: &mut Frame, app: &App, area: Rect) {
             _ => Color::Yellow,
         })
         .add_modifier(Modifier::BOLD);
-    if inner.height < 7 {
-        // Tiny stacked layouts keep playback controls and session statistics visible.
-        let mut lines = vec![
-            Line::styled(name, Style::default().add_modifier(Modifier::BOLD)),
-            Line::from(format!("{artist} · {title}")),
-        ];
-        if inner.height >= 6 {
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    if inner.height < 8 {
+        let stats = if stats.chars().count() > usize::from(inner.width) {
+            format!(
+                "{}: {} | {}: {uptime}",
+                lang.text("Drops"),
+                app.disconnects,
+                lang.text("Up")
+            )
+        } else {
+            stats
+        };
+        let mut lines = vec![Line::styled(format!("{name} | {artist} · {title}"), bold)];
+        if inner.height >= 7 {
             lines.push(Line::from(audio));
         }
-        if inner.height >= 5 {
-            lines.push(Line::from(volume_line(app.config.volume, inner.width)));
-            lines.push(Line::styled(status, status_style));
-        } else {
-            let remaining = inner
-                .width
-                .saturating_sub(status.chars().count() as u16 + 3);
-            let volume = if remaining >= 13 {
-                format!(" · {}", volume_line(app.config.volume, remaining))
-            } else {
-                String::new()
-            };
-            lines.push(Line::from(vec![
-                Span::styled(status, status_style),
-                Span::raw(volume),
-            ]));
+        if inner.height >= 6 {
+            lines.push(Line::from(volume_line(
+                app.config.volume,
+                inner.width,
+                lang,
+            )));
         }
+        lines.push(Line::from(vec![
+            Span::styled(status, status_style),
+            Span::raw(format!(" | {}%", app.config.volume)),
+        ]));
+        lines.push(Line::from(random));
         lines.push(Line::from(stats));
         frame.render_widget(Paragraph::new(lines), inner);
         return;
     }
-    let roomy = inner.height >= 15;
+    let roomy = inner.height >= 16;
     let stats_height = if stats.chars().count() > usize::from(inner.width) {
+        2
+    } else {
+        1
+    };
+    let random_height = if random.chars().count() > usize::from(inner.width) {
         2
     } else {
         1
@@ -273,18 +319,18 @@ fn now_playing(frame: &mut Frame, app: &App, area: Rect) {
         Constraint::Length(1),
         Constraint::Length(if roomy { 1 } else { 0 }),
         Constraint::Length(2),
+        Constraint::Length(random_height),
         Constraint::Length(stats_height),
     ])
     .split(inner);
-    let bold = Style::default().add_modifier(Modifier::BOLD);
     let muted = Style::default().fg(Color::Gray);
     let details = if roomy {
         vec![
             Line::styled(name, bold),
             Line::from(""),
-            Line::styled("Artist", muted),
+            Line::styled(lang.text("Artist"), muted),
             Line::styled(artist, bold),
-            Line::styled("Title", muted),
+            Line::styled(lang.text("Title"), muted),
             Line::styled(title, bold.fg(Color::Cyan)),
             Line::from(""),
             Line::styled(audio, muted),
@@ -302,7 +348,7 @@ fn now_playing(frame: &mut Frame, app: &App, area: Rect) {
         sections[0],
     );
     frame.render_widget(
-        Paragraph::new(volume_line(app.config.volume, inner.width)),
+        Paragraph::new(volume_line(app.config.volume, inner.width, lang)),
         sections[1],
     );
     frame.render_widget(
@@ -311,7 +357,11 @@ fn now_playing(frame: &mut Frame, app: &App, area: Rect) {
             .wrap(Wrap { trim: true }),
         sections[3],
     );
-    frame.render_widget(Paragraph::new(stats).wrap(Wrap { trim: true }), sections[4]);
+    frame.render_widget(
+        Paragraph::new(random).wrap(Wrap { trim: true }),
+        sections[4],
+    );
+    frame.render_widget(Paragraph::new(stats).wrap(Wrap { trim: true }), sections[5]);
 }
 #[cfg(test)]
 mod tests {
@@ -326,13 +376,15 @@ mod tests {
     }
     #[test]
     fn volume_bar_fits_available_width() {
-        for width in 13..120 {
-            for volume in [0, 5, 85, 100] {
-                assert!(volume_line(volume, width).chars().count() <= usize::from(width));
+        for lang in [Language::German, Language::English] {
+            for width in 17..120 {
+                for volume in [0, 5, 85, 100] {
+                    assert!(volume_line(volume, width, lang).chars().count() <= usize::from(width));
+                }
             }
         }
-        assert!(!volume_line(100, 5).contains('█'));
-        assert!(!volume_line(0, 30).contains('█'));
-        assert!(!volume_line(100, 30).contains('░'));
+        assert!(!volume_line(100, 5, Language::English).contains('█'));
+        assert!(!volume_line(0, 30, Language::English).contains('█'));
+        assert!(!volume_line(100, 30, Language::English).contains('░'));
     }
 }
