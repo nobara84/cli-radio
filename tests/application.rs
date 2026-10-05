@@ -43,6 +43,8 @@ fn fixture() -> (App, mpsc::Receiver<Control>, tempfile::TempDir) {
         reconnect: Reconnect::default(),
         active: None,
         metadata: Metadata::default(),
+        cache: cli_radio::cache::Cache::default(),
+        mpv_version: None,
         message: String::new(),
         store,
         log: Log::open(&path),
@@ -549,6 +551,7 @@ fn footer_and_technical_error_translation_are_centralized() {
     for language in [Language::German, Language::English] {
         for width in [38, 60, 80, 151] {
             let footer = language.footer(width);
+            assert!(footer.join(" ").contains("i Info"));
             assert!(footer.iter().all(|line| line.contains('|')
                 && !line.contains('·')
                 && line.chars().count() <= width as usize));
@@ -561,4 +564,267 @@ fn footer_and_technical_error_translation_are_centralized() {
     assert!(!translated.contains("source files"));
     assert!(!translated.contains("Cannot read"));
     assert_eq!(Language::English.message(warning), warning);
+}
+
+#[tokio::test]
+async fn live_cache_state_is_localized_generation_scoped_and_logs_only_transitions() {
+    use cli_radio::i18n::Language;
+    use serde_json::json;
+    let (mut app, mut receiver, temp) = fixture();
+    app.play().await;
+    receiver.recv().await.unwrap();
+    let generation = app.reconnect.generation;
+    let property = |name: &str, data| Notice::Property(generation, name.into(), data);
+    app.notice(property(
+        "demuxer-cache-state",
+        json!({"cache-duration": 6.7, "fw-bytes": 296000}),
+    ));
+    assert_eq!(
+        Language::German.buffer(&app.cache),
+        "Puffer: 6,7 s · 296 KB"
+    );
+    assert_eq!(
+        Language::English.buffer(&app.cache),
+        "Buffer: 6.7 s · 296 KB"
+    );
+    for _ in 0..10 {
+        app.notice(property("paused-for-cache", json!(true)));
+        app.notice(property(
+            "demuxer-cache-state",
+            json!({"cache-duration": 0.3}),
+        ));
+    }
+    assert_eq!(
+        Language::German.buffer(&app.cache),
+        "Puffer: 0,3 s · puffert …"
+    );
+    assert_eq!(
+        Language::English.buffer(&app.cache),
+        "Buffer: 0.3 s · buffering …"
+    );
+    for language in [Language::German, Language::English] {
+        app.config.language = language;
+        for (width, height) in [(151, 51), (80, 20), (38, 12)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal.draw(|frame| ui::draw(frame, &app)).unwrap();
+            let text: String = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect();
+            assert!(
+                text.contains(language.text("Buffer")),
+                "missing buffer at {width}x{height}"
+            );
+        }
+    }
+    app.notice(property("paused-for-cache", json!(false)));
+    app.notice(property("paused-for-cache", json!(false)));
+    let log = std::fs::read_to_string(temp.path().join("cli-radio.log")).unwrap();
+    assert_eq!(log.matches("cache buffering started").count(), 1);
+    assert_eq!(log.matches("cache buffering ended").count(), 1);
+    app.notice(property("demuxer-cache-state", json!(null)));
+    assert_eq!(Language::German.buffer(&app.cache), "Puffer: —");
+    assert_eq!(Language::English.buffer(&app.cache), "Buffer: —");
+    app.notice(property("paused-for-cache", json!(true)));
+    assert_eq!(
+        Language::English.buffer(&app.cache),
+        "Buffer: — · buffering …"
+    );
+    app.notice(Notice::Property(
+        generation.wrapping_sub(1),
+        "demuxer-cache-state".into(),
+        json!({"cache-duration": 10}),
+    ));
+    assert_eq!(app.cache.seconds, None);
+    app.notice(property(
+        "demuxer-cache-state",
+        json!({"cache-duration": 1e100, "fw-bytes": u64::MAX}),
+    ));
+    let mut terminal = Terminal::new(TestBackend::new(38, 12)).unwrap();
+    terminal.draw(|frame| ui::draw(frame, &app)).unwrap();
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
+    assert!(text.contains("Uptime:"));
+    app.notice(Notice::Lost(generation, "Stream stalled; restarting"));
+    assert_eq!(app.cache, cli_radio::cache::Cache::default());
+    app.play().await;
+    receiver.recv().await.unwrap();
+    app.notice(Notice::Property(
+        app.reconnect.generation,
+        "demuxer-cache-state".into(),
+        json!({"cache-duration": 3}),
+    ));
+    app.selected = 1;
+    app.play().await;
+    receiver.recv().await.unwrap();
+    assert_eq!(app.cache, cli_radio::cache::Cache::default());
+    app.stop().await;
+    assert_eq!(app.cache, cli_radio::cache::Cache::default());
+    app.notice(property("paused-for-cache", json!(true)));
+    assert!(!app.cache.paused);
+}
+
+fn screen(app: &App, width: u16, height: u16) -> String {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal.draw(|frame| ui::draw(frame, app)).unwrap();
+    terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect()
+}
+
+#[tokio::test]
+async fn diagnostics_keys_are_informational_and_preserve_playback() {
+    let (mut app, mut receiver, _temp) = fixture();
+    app.play().await;
+    receiver.recv().await.unwrap();
+    app.notice(Notice::Playing(app.reconnect.generation));
+    app.config.random_mode = true;
+    let now = std::time::Instant::now();
+    let remaining = app
+        .random_timer
+        .remaining(now, app.config.random_interval_hours);
+    let generation = app.reconnect.generation;
+    let phase = app.reconnect.phase;
+    let selected = app.selected;
+    for close in [KeyCode::Char('i'), KeyCode::Esc] {
+        key(&mut app, KeyCode::Char('i')).await;
+        assert!(matches!(app.mode, Mode::Info));
+        assert_eq!(app.reconnect.phase, phase);
+        assert_eq!(app.reconnect.generation, generation);
+        assert_eq!(app.selected, selected);
+        assert_eq!(
+            app.random_timer
+                .remaining(now, app.config.random_interval_hours),
+            remaining
+        );
+        assert!(app.reconnect.desired);
+        assert!(receiver.try_recv().is_err());
+        key(&mut app, close).await;
+        assert!(matches!(app.mode, Mode::Normal));
+    }
+    key(&mut app, KeyCode::Char('l')).await;
+    key(&mut app, KeyCode::Char('i')).await;
+    assert!(screen(&app, 120, 45).contains("Info / Diagnostics"));
+}
+
+#[test]
+fn diagnostics_localizes_runtime_uses_resolved_paths_and_never_exposes_proxy_secrets() {
+    use cli_radio::i18n::Language;
+    use serde_json::json;
+    let (mut app, _receiver, _temp) = fixture();
+    app.mode = Mode::Info;
+    app.reconnect.desired = true;
+    app.active = Some(app.stations[0].clone());
+    app.store.config_dir = "/custom/config/cli-radio".into();
+    app.store.data_dir = "/custom/data/cli-radio".into();
+    app.store.state_dir = "/custom/state with spaces/cli-radio".into();
+    app.config.network.proxy =
+        "http://secret-user:secret-password@proxy.invalid:3128/token-secret".into();
+    app.config.network.proxy_username = "explicit-user-secret".into();
+    app.config.network.proxy_password = "explicit-password-secret".into();
+    app.environment.insert(
+        "HTTPS_PROXY".into(),
+        "http://env-secret:env-password@hidden.invalid".into(),
+    );
+    app.environment
+        .insert("NO_PROXY".into(), "bypass-secret".into());
+    for (lang, labels) in [
+        (
+            Language::German,
+            [
+                "Info / Diagnose",
+                "Autor: Markus Schneider",
+                "Technik",
+                "Wichtige Befehle",
+                "Dateien",
+                "Puffer: —",
+            ],
+        ),
+        (
+            Language::English,
+            [
+                "Info / Diagnostics",
+                "Author: Markus Schneider",
+                "Technical",
+                "Useful commands",
+                "Files",
+                "Buffer: —",
+            ],
+        ),
+    ] {
+        app.config.language = lang;
+        let text = screen(&app, 140, 45);
+        for label in labels {
+            assert!(text.contains(label), "missing {label}");
+        }
+        for value in [
+            &format!("cli-radio {}", env!("CARGO_PKG_VERSION")),
+            "/custom/config/cli-radio/config.toml",
+            "/custom/data/cli-radio/stations.toml",
+            "tail -f '/custom/state with spaces/cli-radio/cli-radio.log'",
+            "ps -ww -C mpv -o pid,args",
+            "systemctl --user status pipewire",
+            "pactl info",
+            "mpv: —",
+            "--no-config",
+            "JSON IPC",
+        ] {
+            assert!(text.contains(value), "missing {value}");
+        }
+        for secret in [
+            "secret-user",
+            "secret-password",
+            "explicit-user-secret",
+            "explicit-password-secret",
+            "token-secret",
+            "env-secret",
+            "env-password",
+            "hidden.invalid",
+            "bypass-secret",
+            "bootstrap-stations",
+        ] {
+            assert!(!text.contains(secret), "leaked {secret}");
+        }
+    }
+    app.notice(Notice::Property(
+        app.reconnect.generation,
+        "mpv-version".into(),
+        json!("0.41.0"),
+    ));
+    app.cache
+        .update(&json!({"cache-duration": 0.3, "fw-bytes": 1000}));
+    app.cache.paused = true;
+    assert!(screen(&app, 140, 45).contains("Buffer: 0.3 s · 1 KB · buffering …"));
+    assert!(screen(&app, 140, 45).contains("mpv: 0.41.0"));
+    app.config.language = Language::German;
+    assert!(screen(&app, 140, 45).contains("Puffer: 0,3 s · 1 KB · puffert …"));
+    app.active.as_mut().unwrap().name = "Station".repeat(1000);
+    app.mpv_version = Some("version".repeat(1000));
+    app.store.state_dir = format!("/{}", "long-path/".repeat(1000)).into();
+    for (width, height) in [
+        (0, 0),
+        (1, 1),
+        (10, 4),
+        (38, 12),
+        (60, 25),
+        (80, 20),
+        (140, 45),
+    ] {
+        let text = screen(&app, width, height);
+        if width >= 38 && height >= 12 {
+            assert!(text.contains("i / Esc: Zurück"));
+        }
+    }
 }

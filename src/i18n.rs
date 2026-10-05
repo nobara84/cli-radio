@@ -51,6 +51,36 @@ impl Language {
         result
     }
 
+    pub fn buffer(self, cache: &crate::cache::Cache) -> String {
+        let seconds = cache.seconds.map(|n| {
+            let value = format!("{n:.1}");
+            format!(
+                "{} s",
+                if self == Self::German {
+                    value.replace('.', ",")
+                } else {
+                    value
+                }
+            )
+        });
+        let bytes = cache.bytes.map(|n| format!("{} KB", n / 1000));
+        let value = match (seconds, bytes) {
+            (Some(s), Some(b)) => format!("{s} · {b}"),
+            (Some(s), None) => s,
+            (None, Some(b)) => b,
+            (None, None) => "—".into(),
+        };
+        format!(
+            "{}: {value}{}",
+            self.text("Buffer"),
+            if cache.paused {
+                format!(" · {}", self.text("buffering …"))
+            } else {
+                String::new()
+            }
+        )
+    }
+
     pub fn status(self, reconnect: &Reconnect, now: Instant) -> String {
         match reconnect.phase {
             Phase::Playing => format!("● {}", self.text("Playing")),
@@ -107,22 +137,22 @@ impl Language {
             (Self::German, true) => vec![
                 "↑↓/jk | Enter Start | Space Stopp",
                 "+/- Laut. | f Fav. | / Suche | q Ende",
-                "a+ | e~ | d- | r Zufall | l English",
+                "a/e/d | r Zufall | l English | i Info",
             ],
             (Self::English, true) => vec![
                 "↑↓/jk | Enter Play | Space Stop",
                 "+/- Vol | f Fav | / Find | q Quit",
-                "a+ | e~ | d- | r Random | l Deutsch",
+                "a/e/d | r Random | l Deutsch | i Info",
             ],
             (Self::German, false) => vec![
                 "↑↓/jk Auswahl | Enter Abspielen | Space Stopp/Start | +/- Lautstärke",
                 "f Favorit | / Suche | a Neu | e Bearbeiten | d Löschen",
-                "r Zufall | l English | q Beenden",
+                "r Zufall | l English | i Info | q Beenden",
             ],
             (Self::English, false) => vec![
                 "↑↓/jk Select | Enter Play | Space Stop/Play | +/- Volume",
                 "f Favorite | / Search | a Add | e Edit | d Delete",
-                "r Random | l Deutsch | q Quit",
+                "r Random | l Deutsch | i Info | q Quit",
             ],
         }
     }
@@ -261,6 +291,44 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Reconnecting in", "Wiederverbinden in"),
     ("next switch in", "nächster Wechsel in"),
     ("Edit Station", "Sender bearbeiten"),
+    ("Info / Diagnostics", "Info / Diagnose"),
+    ("Author", "Autor"),
+    ("Runtime", "Laufzeit"),
+    ("Status", "Status"),
+    ("Station", "Sender"),
+    ("Technical", "Technik"),
+    ("Useful commands", "Wichtige Befehle"),
+    ("Files", "Dateien"),
+    (
+        "active (NO_PROXY may bypass)",
+        "aktiv (NO_PROXY kann umgehen)",
+    ),
+    ("inactive", "inaktiv"),
+    ("invalid configuration", "ungültige Konfiguration"),
+    (
+        "mpv.conf: disabled (--no-config)",
+        "mpv.conf: deaktiviert (--no-config)",
+    ),
+    ("Control: JSON IPC", "Steuerung: JSON IPC"),
+    (
+        "Cache: memory only; disk caching disabled",
+        "Cache: nur RAM; Disk-Cache deaktiviert",
+    ),
+    ("Readahead: target ~10 s", "Readahead: Ziel ~10 s"),
+    ("Network timeout: 15 s", "Netzwerk-Timeout: 15 s"),
+    ("Cache-pause watchdog: 30 s", "Cache-Pause-Watchdog: 30 s"),
+    ("Position-stall watchdog: 60 s", "Positions-Watchdog: 60 s"),
+    (
+        "Reconnect: enabled, unlimited retries with backoff",
+        "Reconnect: aktiv, unbegrenzt mit Backoff",
+    ),
+    ("i / Esc: Back", "i / Esc: Zurück"),
+    (
+        "Small terminal: runtime only",
+        "Kleines Terminal: nur Laufzeitdaten",
+    ),
+    ("Buffer", "Puffer"),
+    ("buffering …", "puffert …"),
     ("Now Playing", "Aktuelle Wiedergabe"),
     ("Disconnects", "Verbindungsabbrüche"),
     ("Connecting…", "Verbinden…"),

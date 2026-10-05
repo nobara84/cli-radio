@@ -15,6 +15,10 @@ fn safe(text: &str) -> String {
     text.chars().filter(|c| !c.is_control()).collect()
 }
 pub fn draw(frame: &mut Frame, app: &App) {
+    if matches!(app.mode, Mode::Info) {
+        diagnostics(frame, app);
+        return;
+    }
     let area = frame.area();
     let lang = app.config.language;
     let footer = lang.footer(area.width);
@@ -256,6 +260,7 @@ fn now_playing(frame: &mut Frame, app: &App, area: Rect) {
         available(&app.metadata.codec),
         available(&app.metadata.bitrate)
     );
+    let buffer = lang.buffer(&app.cache);
     let status = lang.status(&app.reconnect, now);
     let random = lang.random_status(
         app.config.random_mode,
@@ -296,9 +301,18 @@ fn now_playing(frame: &mut Frame, app: &App, area: Rect) {
         }
         lines.push(Line::from(vec![
             Span::styled(status, status_style),
-            Span::raw(format!(" | {}%", app.config.volume)),
+            Span::raw(if inner.height == 4 {
+                format!(" | {random}")
+            } else {
+                format!(" | {}%", app.config.volume)
+            }),
         ]));
-        lines.push(Line::from(random));
+        if inner.height >= 4 {
+            lines.push(Line::from(buffer));
+        }
+        if inner.height >= 5 || inner.height < 4 {
+            lines.push(Line::from(random));
+        }
         lines.push(Line::from(stats));
         frame.render_widget(Paragraph::new(lines), inner);
         return;
@@ -315,10 +329,11 @@ fn now_playing(frame: &mut Frame, app: &App, area: Rect) {
         1
     };
     let sections = Layout::vertical([
-        Constraint::Min(4),
+        Constraint::Min(3),
+        Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(if roomy { 1 } else { 0 }),
-        Constraint::Length(2),
+        Constraint::Length(if roomy { 2 } else { 1 }),
         Constraint::Length(random_height),
         Constraint::Length(stats_height),
     ])
@@ -351,18 +366,145 @@ fn now_playing(frame: &mut Frame, app: &App, area: Rect) {
         Paragraph::new(volume_line(app.config.volume, inner.width, lang)),
         sections[1],
     );
+    frame.render_widget(Paragraph::new(buffer), sections[2]);
     frame.render_widget(
         Paragraph::new(status)
             .style(status_style)
             .wrap(Wrap { trim: true }),
-        sections[3],
+        sections[4],
     );
     frame.render_widget(
         Paragraph::new(random).wrap(Wrap { trim: true }),
-        sections[4],
+        sections[5],
     );
-    frame.render_widget(Paragraph::new(stats).wrap(Wrap { trim: true }), sections[5]);
+    frame.render_widget(Paragraph::new(stats).wrap(Wrap { trim: true }), sections[6]);
 }
+fn diagnostics(frame: &mut Frame, app: &App) {
+    let lang = app.config.language;
+    let area = frame.area();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" cli-radio · {} ", lang.text("Info / Diagnostics")));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let rows = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(inner);
+    let now = Instant::now();
+    let proxy = app
+        .active
+        .as_ref()
+        .map(|s| app.config.network.resolve(&s.url, &app.environment));
+    // Only a fixed status label is exposed, never proxy URLs or environment values.
+    let proxy = match proxy {
+        Some(Ok(p)) if p.url.is_some() => "active (NO_PROXY may bypass)",
+        Some(Err(_)) => "invalid configuration",
+        _ => "inactive",
+    };
+    let mut lines = vec![
+        format!("cli-radio {}", env!("CARGO_PKG_VERSION")),
+        format!("{}: Markus Schneider", lang.text("Author")),
+        "Backend: mpv".into(),
+        lang.text("Runtime").into(),
+        format!(
+            "{}: {}",
+            lang.text("Status"),
+            lang.status(&app.reconnect, now)
+        ),
+        format!(
+            "{}: {}",
+            lang.text("Station"),
+            app.active
+                .as_ref()
+                .map(|s| safe(&s.name))
+                .unwrap_or_else(|| "—".into())
+        ),
+        format!(
+            "Codec: {} · Bitrate: {}",
+            available(&app.metadata.codec),
+            available(&app.metadata.bitrate)
+        ),
+        lang.buffer(&app.cache),
+        format!(
+            "{}: {} · {}: {}",
+            lang.text("Uptime"),
+            format_uptime(now.saturating_duration_since(app.session_started)),
+            lang.text("Disconnects"),
+            app.disconnects
+        ),
+        lang.random_status(
+            app.config.random_mode,
+            &app.random_timer,
+            now,
+            app.config.random_interval_hours,
+            true,
+        ),
+        format!("Proxy: {}", lang.text(proxy)),
+        format!(
+            "mpv: {}",
+            app.mpv_version
+                .as_deref()
+                .map(safe)
+                .unwrap_or_else(|| "—".into())
+        ),
+    ];
+    if rows[0].height >= 31 {
+        lines.push(lang.text("Technical").into());
+        lines.extend([
+            lang.text("Control: JSON IPC").into(),
+            lang.text("mpv.conf: disabled (--no-config)").into(),
+            lang.text("Cache: memory only; disk caching disabled")
+                .into(),
+            lang.text("Readahead: target ~10 s").into(),
+            lang.text("Network timeout: 15 s").into(),
+            lang.text("Cache-pause watchdog: 30 s").into(),
+            lang.text("Position-stall watchdog: 60 s").into(),
+            lang.text("Reconnect: enabled, unlimited retries with backoff")
+                .into(),
+            lang.text("Useful commands").into(),
+            "cli-radio --version".into(),
+            format!(
+                "tail -f {}",
+                shell_path(&app.store.state_dir.join("cli-radio.log"))
+            ),
+            "ps -ww -C mpv -o pid,args".into(),
+            "systemctl --user status pipewire".into(),
+            "pactl info".into(),
+            lang.text("Files").into(),
+            format!(
+                "Config: {}",
+                app.store.config_dir.join("config.toml").display()
+            ),
+            format!(
+                "{}: {}",
+                lang.text("Stations"),
+                app.store.data_dir.join("stations.toml").display()
+            ),
+            format!(
+                "Log: {}",
+                app.store.state_dir.join("cli-radio.log").display()
+            ),
+        ]);
+    } else {
+        lines.push(lang.text("Small terminal: runtime only").into());
+    }
+    // Single-line clipping preserves borders even for arbitrary paths/metadata.
+    frame.render_widget(
+        Paragraph::new(
+            lines
+                .into_iter()
+                .map(|s| Line::from(safe(&s)))
+                .collect::<Vec<_>>(),
+        ),
+        rows[0],
+    );
+    frame.render_widget(
+        Paragraph::new(lang.text("i / Esc: Back")).style(Style::default().fg(Color::Cyan)),
+        rows[1],
+    );
+}
+fn shell_path(path: &std::path::Path) -> String {
+    format!("'{}'", path.to_string_lossy().replace('\'', "'\"'\"'"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

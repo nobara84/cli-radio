@@ -63,16 +63,7 @@ async fn send(stream: &mut tokio::net::unix::OwnedWriteHalf, value: Value) -> io
         .await
         .map_err(|_| io::Error::other("IPC timeout"))?
 }
-fn spawn(proxy: &Proxy, runtime: &std::path::Path) -> Result<Session, &'static str> {
-    use std::os::unix::fs::PermissionsExt;
-    let dir = runtime.join(format!(
-        "mpv-{}",
-        &uuid::Uuid::new_v4().simple().to_string()[..12]
-    ));
-    std::fs::create_dir(&dir).map_err(|_| "Cannot create private IPC directory")?;
-    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
-        .map_err(|_| "Cannot protect IPC directory")?;
-    let socket = dir.join("ipc");
+fn playback_command(proxy: &Proxy, socket: &std::path::Path) -> Command {
     let mut cmd = Command::new("mpv");
     cmd.args([
         "--no-config",
@@ -84,6 +75,11 @@ fn spawn(proxy: &Proxy, runtime: &std::path::Path) -> Result<Session, &'static s
         "--input-default-bindings=no",
         "--ytdl=no",
         "--network-timeout=15",
+        "--cache=yes",
+        "--cache-on-disk=no",
+        "--cache-pause=yes",
+        "--cache-pause-wait=2",
+        "--demuxer-readahead-secs=10",
         "--tls-verify=yes",
     ])
     .arg(format!("--input-ipc-server={}", socket.display()))
@@ -102,6 +98,19 @@ fn spawn(proxy: &Proxy, runtime: &std::path::Path) -> Result<Session, &'static s
     if let Some(proxy) = &proxy.url {
         cmd.env("http_proxy", proxy);
     }
+    cmd
+}
+fn spawn(proxy: &Proxy, runtime: &std::path::Path) -> Result<Session, &'static str> {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = runtime.join(format!(
+        "mpv-{}",
+        &uuid::Uuid::new_v4().simple().to_string()[..12]
+    ));
+    std::fs::create_dir(&dir).map_err(|_| "Cannot create private IPC directory")?;
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+        .map_err(|_| "Cannot protect IPC directory")?;
+    let socket = dir.join("ipc");
+    let mut cmd = playback_command(proxy, &socket);
     let child = match cmd.spawn() {
         Ok(child) => child,
         Err(e) => {
@@ -133,10 +142,12 @@ async fn connect(session: &mut Session, url: &str, volume: u8) -> Result<UnixStr
             // URLs and volume are JSON commands, never shell arguments.
             let (read, mut write) = stream.into_split();
             for (i, name) in [
+                "mpv-version",
                 "metadata",
                 "audio-codec-name",
                 "audio-bitrate",
                 "paused-for-cache",
+                "demuxer-cache-state",
                 "time-pos",
             ]
             .iter()
@@ -280,6 +291,58 @@ pub async fn run(
         }
         if controls.is_closed() && pending.is_none() {
             break;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn launch_uses_explicit_memory_cache_and_ignores_user_config() {
+        let cmd = playback_command(
+            &Proxy {
+                url: None,
+                bypass: String::new(),
+            },
+            std::path::Path::new("/private/ipc"),
+        );
+        assert_eq!(cmd.as_std().get_program(), "mpv");
+        let args: Vec<_> = cmd
+            .as_std()
+            .get_args()
+            .map(|a| a.to_str().unwrap())
+            .collect();
+        for expected in [
+            "--no-config",
+            "--network-timeout=15",
+            "--cache=yes",
+            "--cache-on-disk=no",
+            "--cache-pause=yes",
+            "--cache-pause-wait=2",
+            "--demuxer-readahead-secs=10",
+            "--input-ipc-server=/private/ipc",
+        ] {
+            assert_eq!(
+                args.iter().filter(|arg| **arg == expected).count(),
+                1,
+                "{expected}"
+            );
+        }
+        for prefix in [
+            "--cache=",
+            "--cache-on-disk=",
+            "--cache-pause=",
+            "--cache-pause-wait=",
+            "--demuxer-readahead-secs=",
+            "--network-timeout=",
+        ] {
+            assert_eq!(
+                args.iter().filter(|arg| arg.starts_with(prefix)).count(),
+                1,
+                "conflicting {prefix}"
+            );
         }
     }
 }

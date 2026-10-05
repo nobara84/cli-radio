@@ -220,6 +220,16 @@ try:
     r.wait(lambda: r.settings().get('random_mode') is False)
     child = r.child()
     assert child is not None
+    plays = r.log().count(' playing')
+    r.key('i')
+    r.wait(lambda: 'Info / Diagnose' in r.screen())
+    r.wait(lambda: re.search(r'Puffer: [0-9]+,[0-9] s', r.screen()) is not None)
+    r.wait(lambda: re.search(r'mpv: .*?[0-9]+\.[0-9]+', r.screen()) is not None)
+    assert r.child() == child and r.log().count(' playing') == plays
+    r.key('\x1b')
+    r.wait(lambda: 'Aktuelle Wiedergabe' in r.screen())
+    assert r.child() == child and r.log().count(' playing') == plays
+    print('PASS: live cache/version IPC reporting, diagnostics open/close preserves mpv playback')
     os.kill(child, signal.SIGKILL)
     r.wait(lambda: r.log().count(' playing') >= 2)
     assert r.child() != child

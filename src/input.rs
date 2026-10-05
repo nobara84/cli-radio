@@ -8,6 +8,14 @@ pub async fn handle(app: &mut App, key: KeyEvent) -> bool {
         return true;
     }
     match &mut app.mode {
+        Mode::Info => {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('i') => app.mode = Mode::Normal,
+                KeyCode::Char('q') => return true,
+                _ => {}
+            }
+            return false;
+        }
         Mode::Search => {
             match key.code {
                 KeyCode::Esc | KeyCode::Enter => app.mode = Mode::Normal,
@@ -71,6 +79,7 @@ pub async fn handle(app: &mut App, key: KeyEvent) -> bool {
     }
     match key.code {
         KeyCode::Char('q') => return true,
+        KeyCode::Char('i') => app.mode = Mode::Info,
         KeyCode::Char('l') => {
             app.config.language.toggle();
             app.save();

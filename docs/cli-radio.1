@@ -1,0 +1,120 @@
+.TH CLI-RADIO 1 "October 2026" "cli-radio 0.1.1" "User Commands"
+.SH NAME
+cli-radio \- terminal internet radio player powered by mpv
+.SH SYNOPSIS
+.B cli-radio
+.RB [ \-h | \-\-help | \-\-version ]
+.SH DESCRIPTION
+cli-radio manages personal internet radio stations in a terminal interface.
+It uses mpv as its playback backend. The first normal start has an empty
+station list; add stations interactively or edit the station file while
+cli-radio is closed. Each station needs a unique UUID.
+.SH OPTIONS
+.TP
+.B \-h, \-\-help
+Print help and exit without starting playback or the terminal interface.
+.TP
+.B \-\-version
+Print the version and exit.
+.SH INTERACTIVE CONTROLS
+.TP
+.B Up/Down, j/k
+Select a station.
+.TP
+.B Enter
+Play or change station.
+.TP
+.B Space
+Stop or play the selected station.
+.TP
+.B +, = / \-
+Increase or decrease volume.
+.TP
+.B f
+Toggle favorite.
+.TP
+.B /
+Search station names. Enter or Esc leaves search; Esc in the main view clears
+the filter.
+.TP
+.B a / e / d
+Add, edit or delete a station. In forms, Tab and Shift+Tab change fields,
+Enter saves and Esc cancels. For deletion, y confirms and n or Esc cancels
+in either language.
+.TP
+.B r
+Toggle Random mode.
+.TP
+.B l
+Switch between German and English.
+.TP
+.B i
+Open Info/Diagnostics without affecting playback. Press i or Esc to return.
+The screen shows runtime and live buffer state, mpv version when available,
+reconnect information, resolved XDG paths and useful troubleshooting commands.
+Proxy credentials are never displayed. Small terminals show a runtime summary.
+.TP
+.B q, Ctrl+C
+Quit.
+.SH FILES
+.TP
+.I $XDG_CONFIG_HOME/cli-radio/config.toml
+Settings; defaults to ~/.config/cli-radio/config.toml.
+.TP
+.I $XDG_DATA_HOME/cli-radio/stations.toml
+Personal stations; defaults to ~/.local/share/cli-radio/stations.toml.
+.TP
+.I $XDG_STATE_HOME/cli-radio/cli-radio.log
+Log; defaults to ~/.local/state/cli-radio/cli-radio.log.
+.PP
+XDG_CONFIG_HOME, XDG_DATA_HOME and XDG_STATE_HOME must be absolute paths.
+Close cli-radio before manually editing configuration or stations.
+.SH LANGUAGE
+The default interface language is German. Press l to switch to English and
+back. The choice is saved in config.toml.
+.SH RANDOM MODE
+Random mode is off by default. The r key toggles it without changing its
+interval. Configure positive whole hours in config.toml:
+.PP
+.nf
+random_mode = true
+random_interval_hours = 12
+.fi
+.PP
+Missing or invalid intervals use 12 hours. After the configured interval,
+Random selects a different personal station. One station cannot switch
+automatically. Reconnecting the same stream preserves the countdown.
+Stop cancels it. Deliberate play, station changes, Random switches and enabling
+Random during playback start a fresh interval. The mode and interval are saved;
+the countdown is not persisted.
+.SH PROXY ENVIRONMENT
+HTTP_PROXY, HTTPS_PROXY, NO_PROXY and their lowercase variants http_proxy,
+https_proxy and no_proxy are supported. Lowercase values take precedence.
+An explicit network.proxy setting overrides proxy environment variables.
+HTTP proxies carry HTTPS streams through CONNECT. SOCKS, NTLM and Kerberos
+are not supported.
+.SH BUFFERING AND RELIABILITY
+mpv uses approximately 10 seconds of readahead to absorb short network
+interruptions. Buffering is in memory, not on disk. This is target buffering;
+actual behavior depends on stream, server and network conditions, so an
+interruption of exactly 10 seconds is not guaranteed to be inaudible.
+Buffering is an application default and is not configurable in 0.1.1.
+The Now Playing panel shows live mpv buffer duration and forward-buffered
+bytes when available, and marks active buffering. Missing information is
+shown as an em dash; reported values are estimates.
+.PP
+Playback uses --no-config, making it independent of the user's mpv.conf.
+The cache settings are --cache=yes, --cache-on-disk=no, --cache-pause=yes,
+--cache-pause-wait=2 and --demuxer-readahead-secs=10.
+The network timeout remains 15 seconds.
+.PP
+A cache pause longer than 30 seconds or no playback-position progress for
+60 seconds triggers the existing stalled-stream watchdog. Unexpected failures
+retry without a limit, with backoff delays of 0, 1, 2, 5, 10 and then at most
+30 seconds. After 60 seconds of successful playback, a later failure resets
+the backoff. Intentional Stop, station or Random changes and application
+shutdown do not count as disconnects or cause stale reconnects.
+.SH AUTHOR
+Markus Schneider.
+.SH SEE ALSO
+.BR mpv (1)

@@ -34,6 +34,10 @@ fn short_and_long_help_are_identical_complete_and_side_effect_free() {
         "12",
         "HTTP_PROXY",
         "NO_PROXY",
+        "i                Open Info/Diagnostics",
+        "BUFFERING / RELIABILITY",
+        "10 seconds",
+        "--no-config",
     ] {
         assert!(text.contains(value), "missing {value}");
     }
@@ -92,7 +96,7 @@ fn version_is_available_without_config_or_terminal() {
     assert!(
         String::from_utf8(output.stdout)
             .unwrap()
-            .starts_with("cli-radio ")
+            .eq(&format!("cli-radio {}\n", env!("CARGO_PKG_VERSION")))
     );
     assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 0);
 }
@@ -102,5 +106,6 @@ fn maintainer_option_is_not_publicly_documented() {
     let readme = include_str!("../README.md");
     assert!(!readme.contains("--bootstrap-stations"));
     assert!(!readme.contains("--import-defaults"));
+    assert!(!include_str!("../docs/cli-radio.1").contains("bootstrap-stations"));
     assert!(!cli_radio::cli::HELP.contains("--bootstrap-stations"));
 }

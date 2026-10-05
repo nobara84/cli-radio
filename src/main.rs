@@ -81,6 +81,8 @@ async fn main() -> io::Result<()> {
         reconnect: Reconnect::default(),
         active: None,
         metadata: Metadata::default(),
+        cache: cli_radio::cache::Cache::default(),
+        mpv_version: None,
         message,
         store,
         log,

@@ -18,6 +18,7 @@ pub struct Metadata {
 }
 pub enum Mode {
     Normal,
+    Info,
     Search,
     Form {
         id: Option<Uuid>,
@@ -39,6 +40,8 @@ pub struct App {
     pub reconnect: Reconnect,
     pub active: Option<Station>,
     pub metadata: Metadata,
+    pub cache: crate::cache::Cache,
+    pub mpv_version: Option<String>,
     pub message: String,
     pub store: Store,
     pub log: Log,
@@ -79,6 +82,7 @@ impl App {
         self.random_timer.start(now);
         self.reconnect.play(now);
         self.metadata = Metadata::default();
+        self.cache = crate::cache::Cache::default();
         self.log
             .event("station selected", self.reconnect.generation);
         self.launch().await;
@@ -134,6 +138,7 @@ impl App {
         match self.config.network.resolve(&station.url, &self.environment) {
             Ok(proxy) => {
                 self.metadata = Metadata::default();
+                self.cache = crate::cache::Cache::default();
                 if self
                     .controls
                     .send(Control::Play {
@@ -165,6 +170,7 @@ impl App {
         self.random_timer.stop();
         self.reconnect.stop();
         self.metadata = Metadata::default();
+        self.cache = crate::cache::Cache::default();
         let _ = self.controls.send(Control::Stop).await;
         self.log
             .event("intentional stop", self.reconnect.generation);
@@ -182,6 +188,7 @@ impl App {
                     if was_playing {
                         self.disconnects = self.disconnects.saturating_add(1);
                     }
+                    self.cache = crate::cache::Cache::default();
                     self.message = error.into();
                     self.log.event("unexpected disconnect", g);
                 }
@@ -190,6 +197,25 @@ impl App {
                 if g == self.reconnect.generation && self.reconnect.desired =>
             {
                 match name.as_str() {
+                    "mpv-version" => {
+                        self.mpv_version =
+                            data.as_str().filter(|s| !s.is_empty()).map(str::to_owned);
+                    }
+                    "demuxer-cache-state" => self.cache.update(&data),
+                    "paused-for-cache" => {
+                        let paused = data.as_bool().unwrap_or(false);
+                        if paused != self.cache.paused {
+                            self.log.event(
+                                if paused {
+                                    "cache buffering started"
+                                } else {
+                                    "cache buffering ended"
+                                },
+                                g,
+                            );
+                        }
+                        self.cache.paused = paused;
+                    }
                     "metadata" => {
                         self.metadata.artist.clear();
                         self.metadata.title.clear();

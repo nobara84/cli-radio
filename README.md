@@ -1,5 +1,7 @@
 # cli-radio
 
+Version 0.1.1 focuses on buffering and playback reliability.
+
 A lightweight terminal-based internet radio player for Linux, developed by
 **Markus Schneider**. The entire interface runs in your terminal using
 Ratatui and Crossterm. mpv plays audio in the background through JSON IPC;
@@ -93,6 +95,7 @@ are displayed as provided, independently of the UI language.
 | d, then y | Delete station; n/Esc cancels in either language |
 | r | Toggle random mode |
 | l | Switch German/English and save choice |
+| i | Open Info/Diagnostics; i or Esc returns |
 | q / Ctrl+C | Quit |
 
 Editing a playing station changes the saved entry; the current stream is retained
@@ -249,6 +252,33 @@ discarded. Config credentials are plain text protected by 0600 permissions, and
 process environments remain accessible to authorized same-user/root processes.
 Do not commit real credentials.
 
+## Info and diagnostics
+
+Press `i` to open Info/Diagnostics; press `i` or `Esc` to return. Opening or
+closing the screen does not affect playback, reconnects or the Random timer.
+It shows runtime state, actual mpv buffer estimates, mpv version (when reported
+by the playback IPC session), reconnect details and the resolved XDG file paths.
+Useful troubleshooting commands include the actual log location. Proxy status
+is shown without credentials. Small terminals show a clipped runtime summary.
+
+## Buffering and reliability (0.1.1)
+
+cli-radio uses mpv as its playback backend with approximately 10 seconds of
+readahead to absorb short network interruptions. Buffering stays in memory;
+disk caching is explicitly disabled. The Now Playing panel shows live mpv
+buffer duration and forward-buffered bytes when available, and marks active
+buffering. Missing information appears as `—`; reported values are estimates.
+This is target buffering, not a guarantee
+that every interruption of up to 10 seconds will be inaudible: actual behavior
+depends on stream, server and network conditions.
+
+mpv runs with `--no-config`, so playback behavior does not depend on the user's
+`mpv.conf`. The application defaults are `--cache=yes`, `--cache-on-disk=no`,
+`--cache-pause=yes`, `--cache-pause-wait=2` and `--demuxer-readahead-secs=10`.
+Buffering is not user-configurable in 0.1.1. Longer stalls use the existing
+watchdog and unlimited reconnect/backoff mechanism described below; the
+`--network-timeout=15` setting remains unchanged.
+
 ## Recovery and session statistics
 
 Unexpected stream end, network/DNS/proxy/server failures, IPC loss or mpv exit
@@ -325,7 +355,9 @@ its files live under target/smoke and user settings are untouched.
 
 Modules separate application state/input/UI, lightweight i18n, random timing,
 mpv worker, reconnect state machine, stations, config, proxy and logging.
-RPM packaging is not currently provided.
+The packaging-ready man page is maintained in `docs/cli-radio.1` for installation
+as `/usr/share/man/man1/cli-radio.1` (or its compressed equivalent). An RPM spec
+is not maintained in this repository.
 
 ## Currently not implemented
 

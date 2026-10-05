@@ -46,6 +46,7 @@ INTERACTIVE CONTROLS:
     a / e / d        Add / edit / delete station
     r                Toggle random station mode (configurable interval; default 12 hours)
     l                Switch UI language between German and English
+    i                Open Info/Diagnostics; i or Esc returns (playback unchanged)
     q / Ctrl+C       Quit
     Search: Enter/Esc leave search; Esc in main view clears filter
     Form: Tab/Shift+Tab change field; Enter save; Esc cancel
@@ -72,6 +73,13 @@ RANDOM MODE:
     Reconnect of the same stream preserves the timer. Stop cancels the countdown;
     deliberate play/change or enabling during playback starts a fresh interval.
     ON/OFF is saved; the countdown is not. One station: no automatic switch.
+
+BUFFERING / RELIABILITY:
+    mpv uses approximately 10 seconds of readahead in memory, never disk caching.
+    Actual buffering depends on stream/server/network conditions.
+    Longer stalls use watchdogs and unlimited reconnect with backoff.
+    --no-config keeps playback independent of the user's mpv.conf.
+    Buffering is an application default, not configurable in 0.1.1.
 
 ENVIRONMENT / PROXY:
     HTTP_PROXY, HTTPS_PROXY, NO_PROXY and http_proxy, https_proxy, no_proxy.
