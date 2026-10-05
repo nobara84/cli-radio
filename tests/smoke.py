@@ -84,6 +84,11 @@ class Radio:
             dest = self.base / kind.lower()
             dest.mkdir(parents=True, exist_ok=True)
             self.env['XDG_' + kind + '_HOME'] = str(dest)
+        # Keep integration tests local-only: an intentionally empty personal list
+        # suppresses first-run seeding and selects only the synthetic test stream.
+        data = self.base / 'data' / 'cli-radio'
+        data.mkdir(exist_ok=True)
+        (data / 'stations.toml').write_text('stations = []\n')
         config = self.base / 'config' / 'cli-radio'
         config.mkdir(exist_ok=True)
         if proxy or bypass:
@@ -98,7 +103,7 @@ class Radio:
         if proxy:
             url = 'http://radio.invalid/live'
         self.key('aSmoke Station\t' + url + '\r')
-        self.wait(lambda: (self.base / 'data/cli-radio/stations.toml').exists(), 5)
+        self.wait(lambda: 'Smoke Station' in (self.base / 'data/cli-radio/stations.toml').read_text(), 5)
 
     def key(self, key):
         os.write(self.master, key.encode())

@@ -16,8 +16,8 @@ Primäre Zielplattformen sind Fedora und Nobara. Lizenz: MIT.
 - HTTP-Proxy für den eigentlichen Stream, einschließlich HTTPS CONNECT
 - Private IPC-Sockets, atomare TOML-Dateien und begrenzte Dateilogs
 
-Die Senderliste startet bewusst leer. Es gibt keine Online-Sendersuche oder
-vorinstallierten URLs. Aufnahme, Timer, Wecker, MPRIS und Playlist-Import sind
+cli-radio liefert neun Standard-Sender mit: sechs Radio-BOB!-Streams, Bayern 1
+Oberfranken, ANTENNE BAYERN und Radio Bamberg. Es gibt keine Online-Sendersuche. Aufnahme, Timer, Wecker, MPRIS und Playlist-Import sind
 nicht Bestandteil dieses MVP. Ein beim Start gespeicherter Sender wird ausgewählt,
 aber erst mit Enter gestartet.
 
@@ -90,6 +90,44 @@ Die Oberfläche nutzt horizontal etwa 33 % für Sender und 67 % für Now Playing
 Unter 80 Spalten wechselt sie zu einer vertikalen Aufteilung und vereinfacht bei
 wenig Höhe die Details; unter
 38×12 Zeichen erscheint ein Hinweis zur Terminalgröße.
+
+## Standard-Sender und bestehende Installationen
+
+Die pflegbare TOML-Datei liegt unter
+[config/default-stations.toml](config/default-stations.toml). Sie wird beim Build
+in das Binary eingebunden; eine Installation braucht keinen separaten Source Tree.
+Default-Einträge benötigen keine UUID. Beim ersten Start werden neue UUIDs erzeugt
+und alle neun Sender mit `favorite = false` in die persönliche Datei
+`$XDG_DATA_HOME/cli-radio/stations.toml` (Fallback
+`~/.local/share/cli-radio/stations.toml`) geschrieben. Diese Erstellung geschieht
+atomar, ohne eine zwischenzeitlich vorhandene Datei zu ersetzen.
+
+Eine vorhandene persönliche Liste wird geladen, auch wenn sie leer ist.
+Programmupdates synchronisieren sie nicht mit den Defaults. Gelöschte Sender
+bleiben gelöscht; Add/Edit/Delete/Favorite funktionieren wie gewohnt.
+
+Um fehlende Standard-Sender ausdrücklich zu ergänzen, cli-radio zuerst beenden:
+
+```bash
+./target/release/cli-radio --import-defaults
+# Bei installiertem Binary:
+cli-radio --import-defaults
+```
+
+Der Befehl startet keine TUI oder Wiedergabe und meldet hinzugefügte sowie
+übersprungene Sender, z.B. `Imported 8 default stations.` / `Skipped 1 existing
+stations.` Die vorhandenen Sender, Namen, UUIDs und Favoriten bleiben erhalten;
+nur die Senderdatei wird atomar gespeichert. Wiederholter Import erzeugt keine
+Duplikate. Bei beschädigten persönlichen Dateien wird der Import verweigert.
+Import und eine parallel laufende TUI sollen nicht gleichzeitig speichern.
+
+Duplikate werden nach normalisierter Stream-URL erkannt: äußere Leerzeichen,
+Host-/Schema-Schreibweise, Standardports, Fragment und abschließende Pfad-Slashes
+werden vereinheitlicht. HTTP und HTTPS, Pfad-Groß-/Kleinschreibung und Queryparameter
+bleiben unterscheidbar. Ein gleicher Sendername allein ist kein Duplikat, da
+unterschiedliche Streams denselben Namen tragen können. Die mitgelieferten URLs
+stammen aus der gewünschten Senderliste; ihre aktuelle Erreichbarkeit wird beim
+Import nicht im Internet geprüft.
 
 ## Konfiguration und XDG
 

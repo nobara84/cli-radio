@@ -1,0 +1,45 @@
+# Bundled seed list. UUIDs are generated when copied into the personal database.
+[[stations]]
+name = "Radio BOB! National"
+url = "http://streams.radiobob.de/bob-national/mp3-192/mediaplayer"
+favorite = false
+
+[[stations]]
+name = "Radio BOB! Best of Rock"
+url = "http://streams.radiobob.de/bob-bestofrock/mp3-192/mediaplayer"
+favorite = false
+
+[[stations]]
+name = "Radio BOB! 80s Rock"
+url = "http://streams.radiobob.de/bob-80srock/mp3-192/mediaplayer"
+favorite = false
+
+[[stations]]
+name = "Radio BOB! 90s Rock"
+url = "http://streams.radiobob.de/bob-90srock/mp3-192/mediaplayer"
+favorite = false
+
+[[stations]]
+name = "Radio BOB! 2000er Rock"
+url = "http://streams.radiobob.de/2000er/mp3-192/mediaplayer/"
+favorite = false
+
+[[stations]]
+name = "Radio BOB! Gaming Rock"
+url = "https://streams.radiobob.de/gamingrock/mp3-192/"
+favorite = false
+
+[[stations]]
+name = "Bayern 1 Oberfranken"
+url = "https://dispatcher.rndfnk.com/br/br1/franken/mp3/mid"
+favorite = false
+
+[[stations]]
+name = "ANTENNE BAYERN"
+url = "https://mp3channels.webradio.antenne.de/antenne"
+favorite = false
+
+[[stations]]
+name = "Radio Bamberg"
+url = "https://webstream.radio-bamberg.de/radio-bamberg.mp3"
+favorite = false

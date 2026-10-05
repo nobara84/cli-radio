@@ -64,6 +64,51 @@ impl Store {
         Ok(s)
     }
     pub fn load(&mut self) -> (Config, Vec<Station>) {
+        let path = self.data_dir.join("stations.toml");
+        // An existing empty database is intentional, never a reason to reseed.
+        let missing =
+            matches!(fs::symlink_metadata(&path), Err(e) if e.kind() == io::ErrorKind::NotFound);
+        let (config, mut stations) = self.load_existing();
+        if missing && self.writable {
+            match crate::defaults::bundled() {
+                Ok(defaults) => {
+                    stations = defaults;
+                    match self.write_stations(&stations, false) {
+                        Ok(()) => {}
+                        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                            return self.load_existing();
+                        }
+                        Err(_) => {
+                            self.warnings.push("Cannot initialize personal station list; defaults loaded for this session only".into());
+                            self.writable = false;
+                        }
+                    }
+                }
+                Err(_) => {
+                    self.warnings
+                        .push("Invalid bundled station list; personal files preserved".into());
+                    self.writable = false;
+                }
+            }
+        }
+        (config, stations)
+    }
+    pub fn import_defaults(&mut self) -> io::Result<crate::defaults::ImportReport> {
+        // Unlike normal startup, do not first seed: fresh imports report 9 added.
+        let missing = matches!(fs::symlink_metadata(self.data_dir.join("stations.toml")), Err(e) if e.kind() == io::ErrorKind::NotFound);
+        let (_, mut stations) = self.load_existing();
+        if !self.writable {
+            return Err(io::Error::other(
+                "Import refused: repair configuration/database first; existing files preserved",
+            ));
+        }
+        let report = crate::defaults::merge(&mut stations).map_err(io::Error::other)?;
+        if report.imported > 0 {
+            self.write_stations(&stations, !missing)?;
+        }
+        Ok(report)
+    }
+    fn load_existing(&mut self) -> (Config, Vec<Station>) {
         let config: Config = self.read(&self.config_dir.join("config.toml"));
         let database: Database = self.read(&self.data_dir.join("stations.toml"));
         let mut stations = Vec::new();
@@ -108,15 +153,25 @@ impl Store {
         }
         let c = toml::to_string_pretty(config)
             .map_err(|_| io::Error::other("Configuration serialization failed"))?;
-        let d = toml::to_string_pretty(&Database {
+        atomic(&self.config_dir.join("config.toml"), c.as_bytes())?;
+        self.write_stations(stations, true)
+    }
+    fn write_stations(&self, stations: &[Station], replace: bool) -> io::Result<()> {
+        let text = toml::to_string_pretty(&Database {
             stations: stations.to_vec(),
         })
         .map_err(|_| io::Error::other("Station serialization failed"))?;
-        atomic(&self.config_dir.join("config.toml"), c.as_bytes())?;
-        atomic(&self.data_dir.join("stations.toml"), d.as_bytes())
+        atomic_write(
+            &self.data_dir.join("stations.toml"),
+            text.as_bytes(),
+            replace,
+        )
     }
 }
 pub fn atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    atomic_write(path, bytes, true)
+}
+fn atomic_write(path: &Path, bytes: &[u8], replace: bool) -> io::Result<()> {
     let temp = path.with_extension(format!("{}.tmp", Uuid::new_v4()));
     let result = (|| {
         let mut file = OpenOptions::new()
@@ -126,7 +181,14 @@ pub fn atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
             .open(&temp)?;
         file.write_all(bytes)?;
         file.sync_all()?;
-        fs::rename(&temp, path)?;
+        if replace {
+            fs::rename(&temp, path)?;
+        } else {
+            // Publish a complete file atomically without replacing a concurrently
+            // created personal database. Both paths reside on the same filesystem.
+            fs::hard_link(&temp, path)?;
+            fs::remove_file(&temp)?;
+        }
         if let Some(parent) = path.parent() {
             fs::File::open(parent)?.sync_all()?;
         }
@@ -140,6 +202,17 @@ pub fn atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn initial_publication_never_overwrites_an_existing_database() {
+        std::fs::create_dir_all("target/test-data").unwrap();
+        let temp = tempfile::tempdir_in("target/test-data").unwrap();
+        let path = temp.path().join("stations.toml");
+        atomic(&path, b"stations = []").unwrap();
+        let error = atomic_write(&path, b"new defaults", false).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "stations = []");
+        assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 1);
+    }
     #[test]
     fn defaults_and_roundtrip() {
         let c: Config = toml::from_str("").unwrap();

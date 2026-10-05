@@ -20,7 +20,7 @@ async fn main() -> io::Result<()> {
     let args: Vec<_> = std::env::args().collect();
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!(
-            "cli-radio — terminal web radio\nRun without arguments to open the TUI.\nEnter Play · Space Stop/Play · a Add · e Edit · d Delete\nf Favorite · / Search · +/- Volume · q/Ctrl+C Quit"
+            "cli-radio — terminal web radio\nRun without arguments to open the TUI.\n--import-defaults: add missing bundled stations without opening the TUI.\nEnter Play · Space Stop/Play · a Add · e Edit · d Delete\nf Favorite · / Search · +/- Volume · q/Ctrl+C Quit"
         );
         return Ok(());
     }
@@ -29,6 +29,23 @@ async fn main() -> io::Result<()> {
         return Ok(());
     }
     let mut store = Store::open()?;
+    if args.iter().any(|a| a == "--import-defaults") {
+        match store.import_defaults() {
+            Ok(report) => {
+                println!(
+                    "Imported {} default stations.\nSkipped {} existing stations.",
+                    report.imported, report.skipped
+                );
+                return Ok(());
+            }
+            Err(_) => {
+                eprintln!(
+                    "Default station import failed. Check XDG permissions and repair invalid TOML; existing files are preserved when validation fails."
+                );
+                std::process::exit(1);
+            }
+        }
+    }
     let (config, stations) = store.load();
     let mut log = Log::open(&store.state_dir);
     log.event("application start", 0);

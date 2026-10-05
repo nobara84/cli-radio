@@ -1,5 +1,6 @@
 pub mod app;
 pub mod config;
+pub mod defaults;
 pub mod input;
 pub mod logging;
 pub mod network;
