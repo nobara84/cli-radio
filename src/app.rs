@@ -2,7 +2,7 @@ use crate::{
     config::{Config, Store},
     logging::Log,
     player::{Control, Notice},
-    reconnect::Reconnect,
+    reconnect::{Phase, Reconnect},
     stations::{Station, filtered, validate},
 };
 use std::{collections::HashMap, time::Instant};
@@ -27,6 +27,8 @@ pub enum Mode {
     Delete(Uuid),
 }
 pub struct App {
+    pub disconnects: u64,
+    pub session_started: Instant,
     pub config: Config,
     pub stations: Vec<Station>,
     pub selected: usize,
@@ -122,7 +124,11 @@ impl App {
                 self.log.event("playing", g);
             }
             Notice::Lost(g, error) => {
+                let was_playing = self.reconnect.phase == Phase::Playing;
                 if self.reconnect.lost(g, Instant::now()) {
+                    if was_playing {
+                        self.disconnects = self.disconnects.saturating_add(1);
+                    }
                     self.message = error.into();
                     self.log.event("unexpected disconnect", g);
                 }

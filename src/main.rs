@@ -16,6 +16,7 @@ use std::{
 use tokio::sync::mpsc;
 #[tokio::main]
 async fn main() -> io::Result<()> {
+    let session_started = Instant::now();
     let args: Vec<_> = std::env::args().collect();
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!(
@@ -47,6 +48,8 @@ async fn main() -> io::Result<()> {
         })
         .unwrap_or(0);
     let mut app = App {
+        disconnects: 0,
+        session_started,
         config,
         stations,
         selected,

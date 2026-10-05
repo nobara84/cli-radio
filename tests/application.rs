@@ -32,6 +32,8 @@ fn fixture() -> (App, mpsc::Receiver<Control>, tempfile::TempDir) {
         Station::new("Two", "http://example.org/two").unwrap(),
     ];
     let app = App {
+        disconnects: 0,
+        session_started: std::time::Instant::now(),
         config: Config::default(),
         stations,
         selected: 0,
@@ -127,5 +129,115 @@ fn renders_wide_narrow_small_and_forms_without_panicking() {
             field: true,
         };
         terminal.draw(|frame| ui::draw(frame, &app)).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn disconnect_counter_counts_outages_not_retry_failures() {
+    let (mut app, _receiver, _temp) = fixture();
+    app.play().await;
+    app.notice(Notice::Playing(app.reconnect.generation));
+    app.notice(Notice::Lost(app.reconnect.generation, "network lost"));
+    assert_eq!(app.disconnects, 1);
+    // Duplicate failure and failed attempts belong to the same outage.
+    app.notice(Notice::Lost(app.reconnect.generation, "duplicate"));
+    for _ in 0..3 {
+        assert!(app.reconnect.tick(app.reconnect.deadline.unwrap()));
+        app.notice(Notice::Lost(app.reconnect.generation, "retry failed"));
+        assert_eq!(app.disconnects, 1);
+    }
+    assert!(app.reconnect.tick(app.reconnect.deadline.unwrap()));
+    app.notice(Notice::Playing(app.reconnect.generation));
+    assert_eq!(app.disconnects, 1);
+    app.notice(Notice::Lost(app.reconnect.generation, "another outage"));
+    assert_eq!(app.disconnects, 2);
+}
+
+#[tokio::test]
+async fn disconnect_counter_excludes_stop_switch_exit_and_initial_failure() {
+    let (mut app, _receiver, _temp) = fixture();
+    app.play().await;
+    app.notice(Notice::Lost(
+        app.reconnect.generation,
+        "initial connection failed",
+    ));
+    assert_eq!(app.disconnects, 0);
+    app.play().await;
+    app.notice(Notice::Playing(app.reconnect.generation));
+    let previous = app.reconnect.generation;
+    app.selected = 1;
+    app.play().await;
+    app.notice(Notice::Lost(previous, "old station ended"));
+    assert_eq!(app.disconnects, 0);
+    app.notice(Notice::Playing(app.reconnect.generation));
+    let previous = app.reconnect.generation;
+    app.stop().await; // Also used during normal application shutdown.
+    app.notice(Notice::Lost(previous, "intentional stop"));
+    app.notice(Notice::Lost(app.reconnect.generation, "late exit"));
+    assert_eq!(app.disconnects, 0);
+}
+
+#[test]
+fn session_stats_are_visible_and_not_persisted() {
+    let (mut app, _receiver, _temp) = fixture();
+    app.session_started = std::time::Instant::now() - std::time::Duration::from_secs(202472);
+    app.disconnects = 7;
+    app.save();
+    let config = std::fs::read_to_string(app.store.config_dir.join("config.toml")).unwrap();
+    assert!(!config.contains("disconnects"));
+    assert!(!config.contains("session_started"));
+    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+    terminal.draw(|frame| ui::draw(frame, &app)).unwrap();
+    let buffer = terminal.backend().buffer();
+    let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
+    assert!(text.contains("Disconnects: 7"));
+    assert!(text.contains("Uptime: 2d 08:14:"));
+    assert!(text.contains("Stopped"));
+    assert!(text.contains("Volume"));
+    assert!(!text.contains("Größe:"));
+    assert!(!text.contains("100 × 30"));
+    let (fresh, _receiver, _temp) = fixture();
+    assert_eq!(fresh.disconnects, 0);
+}
+
+#[test]
+fn responsive_ui_preserves_status_stats_and_metadata() {
+    let (mut app, _receiver, _temp) = fixture();
+    app.active = Some(app.stations[0].clone());
+    app.metadata = Metadata {
+        artist: "Test Artist".into(),
+        title: "Test Title".into(),
+        codec: "mp3".into(),
+        bitrate: "192 kbps".into(),
+    };
+    for (width, height) in [(151, 51), (100, 28), (80, 20), (60, 25), (38, 12)] {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| ui::draw(frame, &app)).unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(
+            text.contains("Stopped"),
+            "missing status at {width}x{height}"
+        );
+        assert!(
+            text.contains("Disconnects: 0"),
+            "missing counter at {width}x{height}"
+        );
+        assert!(
+            text.contains("Uptime:"),
+            "missing uptime at {width}x{height}"
+        );
+        assert!(text.contains("Test Artist"));
+        assert!(text.contains("Test Title"));
+        if height >= 20 {
+            assert!(text.contains("mp3"));
+            assert!(text.contains("192 kbps"));
+            assert!(text.contains('█'));
+        }
     }
 }

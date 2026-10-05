@@ -10,6 +10,7 @@ Primäre Zielplattformen sind Fedora und Nobara. Lizenz: MIT.
 - Sender hinzufügen, bearbeiten, mit Bestätigung löschen, suchen und favorisieren
 - Lautstärke, letzter ausgewählter Sender, Favoriten und Einstellungen dauerhaft speichern
 - Artist/Titel, Codec und Bitrate anzeigen, soweit mpv sie bereitstellt
+- Breitenabhängiger Lautstärkebalken, deutlicher Status, Session-Disconnects und monotone Uptime
 - HTTP/HTTPS und durch mpv/FFmpeg unterstützte MP3-, AAC-, Ogg/Vorbis-, Opus- und HLS-Streams
 - Automatischer Reconnect bei Stream-Ende, Netzwerkproblemen, IPC-Ausfall und mpv-Absturz
 - HTTP-Proxy für den eigentlichen Stream, einschließlich HTTPS CONNECT
@@ -85,7 +86,9 @@ funktionieren auch ohne interaktives Terminal.
 Beim Bearbeiten bleibt die bereits laufende Senderkopie bis zum nächsten Enter
 aktiv. Das Löschen des laufenden Senders stoppt ihn. Formulare unterstützen
 Unicode-Eingabe und Backspace; einen vollständigen Texteditor gibt es noch nicht.
-Die Oberfläche wechselt unter 80 Spalten zu einer vertikalen Aufteilung; unter
+Die Oberfläche nutzt horizontal etwa 33 % für Sender und 67 % für Now Playing.
+Unter 80 Spalten wechselt sie zu einer vertikalen Aufteilung und vereinfacht bei
+wenig Höhe die Details; unter
 38×12 Zeichen erscheint ein Hinweis zur Terminalgröße.
 
 ## Konfiguration und XDG
@@ -199,6 +202,17 @@ Neustart aus. Connecting hat ein 45-Sekunden-Limit; mpv-Netzwerkzugriffe ein
 15-Sekunden-Timeout. Der Worker beendet und reapet den vorherigen Prozess vor
 einem Ersatzstart. Abgebrochener IPC-Aufbau bleibt ebenfalls abbrechbar.
 Die TUI wartet nicht auf Netzwerkzugriffe oder Reconnect-Timer.
+
+Die Anzeige `Disconnects` zählt nur akzeptierte unerwartete Abbrüche einer
+bereits laufenden Wiedergabe. Fehlgeschlagene Erstverbindungen und Reconnect-
+Versuche erhöhen sie nicht. Erst wenn der Stream erneut `Playing` erreicht und
+später wieder abbricht, entsteht ein weiterer Disconnect. Absichtlicher Stop,
+Senderwechsel, alte Events und normales Beenden zählen nicht. Der Counter beginnt
+bei jedem Prozessstart mit 0 und wird nicht gespeichert.
+
+`Uptime` misst die Laufzeit des cli-radio-Prozesses über `std::time::Instant`,
+unabhängig von Systemuhr, Senderwechsel oder Reconnect. Ab 24 Stunden werden Tage
+angezeigt, beispielsweise `2d 08:14:32`.
 
 ## Logging und Troubleshooting
 
