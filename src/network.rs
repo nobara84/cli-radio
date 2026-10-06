@@ -15,6 +15,16 @@ pub struct Proxy {
     pub url: Option<String>,
     pub bypass: String,
 }
+impl Proxy {
+    // Display only a fixed status, never execution URLs or bypass values.
+    pub fn status(&self) -> &'static str {
+        if self.url.is_some() {
+            "active (NO_PROXY may bypass)"
+        } else {
+            "inactive"
+        }
+    }
+}
 impl Network {
     pub fn resolve(
         &self,
@@ -48,7 +58,14 @@ impl Network {
                     url.set_password(Some(&self.proxy_password))
                         .map_err(|_| "Invalid proxy credentials")?;
                 }
-                Some(url.to_string())
+                // URL serialization removes :80, but FFmpeg's proxy transport
+                // requires an explicit port (including for HTTPS CONNECT).
+                Some(format!(
+                    "{}:{}{}",
+                    &url[..url::Position::AfterHost],
+                    url.port_or_known_default().unwrap_or(80),
+                    &url[url::Position::AfterPort..],
+                ))
             }
         };
         Ok(Proxy { url: proxy, bypass })
@@ -57,6 +74,111 @@ impl Network {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn execution_ports_authentication_and_display_are_separate() {
+        for host in ["proxy.example.test", "[::1]"] {
+            for port in ["", ":80", ":8080"] {
+                for authenticated in [false, true] {
+                    let auth = if authenticated {
+                        "testuser:supersecret@"
+                    } else {
+                        ""
+                    };
+                    let raw = format!("http://{auth}{host}{port}");
+                    let expected_port = if port == ":8080" { 8080 } else { 80 };
+                    for configured in [false, true] {
+                        let mut network = Network::default();
+                        let mut env = HashMap::new();
+                        if configured {
+                            network.proxy = format!("http://{host}{port}");
+                            if authenticated {
+                                network.proxy_username = "testuser".into();
+                                network.proxy_password = "supersecret".into();
+                            }
+                        } else {
+                            env.insert("https_proxy".into(), raw.clone());
+                        }
+                        let proxy = network.resolve("https://radio.example.test", &env).unwrap();
+                        let execution = proxy.url.as_ref().unwrap();
+                        assert!(execution.contains(&format!("{host}:{expected_port}/")));
+                        assert_eq!(execution.contains("testuser:supersecret@"), authenticated);
+                        assert_eq!(proxy.status(), "active (NO_PROXY may bypass)");
+                        assert!(!proxy.status().contains("testuser"));
+                        assert!(!proxy.status().contains("supersecret"));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn case_priority_empty_values_and_bypass_are_deterministic() {
+        let mut env = HashMap::from([
+            ("http_proxy".into(), "http://lower.example.test:80".into()),
+            ("HTTP_PROXY".into(), "http://upper.example.test:8080".into()),
+            ("https_proxy".into(), "http://secure.example.test:80".into()),
+            (
+                "HTTPS_PROXY".into(),
+                "http://ignored.example.test:8080".into(),
+            ),
+            ("no_proxy".into(), "localhost,127.0.0.1".into()),
+            ("NO_PROXY".into(), "ignored.example.test".into()),
+        ]);
+        let n = Network::default();
+        assert_eq!(
+            n.resolve("https://radio", &env).unwrap().url.as_deref(),
+            Some("http://secure.example.test:80/")
+        );
+        assert_eq!(
+            n.resolve("http://radio", &env).unwrap().url.as_deref(),
+            Some("http://lower.example.test:80/")
+        );
+        assert_eq!(
+            n.resolve("https://radio", &env).unwrap().bypass,
+            "localhost,127.0.0.1"
+        );
+        env.insert("https_proxy".into(), String::new());
+        assert!(n.resolve("https://radio", &env).unwrap().url.is_none());
+        env.remove("https_proxy");
+        assert_eq!(
+            n.resolve("https://radio", &env).unwrap().url.as_deref(),
+            Some("http://ignored.example.test:8080/")
+        );
+        env.remove("HTTPS_PROXY");
+        assert_eq!(
+            n.resolve("https://radio", &env).unwrap().url.as_deref(),
+            Some("http://lower.example.test:80/")
+        );
+        let explicit = Network {
+            proxy: "http://config.example.test:80".into(),
+            no_proxy: Some(String::new()),
+            ..Default::default()
+        };
+        let p = explicit.resolve("https://radio", &env).unwrap();
+        assert_eq!(p.url.as_deref(), Some("http://config.example.test:80/"));
+        assert!(p.bypass.is_empty());
+        env.clear();
+        let direct = n.resolve("https://radio", &env).unwrap();
+        assert_eq!(direct.status(), "inactive");
+        assert!(direct.bypass.is_empty());
+    }
+
+    #[test]
+    fn invalid_proxy_errors_never_include_input_credentials() {
+        for raw in [
+            "http://testuser:supersecret@",
+            "https://testuser:supersecret@proxy.example.test:80",
+        ] {
+            let env = HashMap::from([("https_proxy".into(), raw.into())]);
+            let error = Network::default()
+                .resolve("https://radio", &env)
+                .err()
+                .unwrap();
+            assert!(!error.contains("testuser"));
+            assert!(!error.contains("supersecret"));
+        }
+    }
+
     #[test]
     fn priority_and_secrets() {
         let env = HashMap::from([

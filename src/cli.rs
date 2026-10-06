@@ -79,7 +79,7 @@ BUFFERING / RELIABILITY:
     Actual buffering depends on stream/server/network conditions.
     Longer stalls use watchdogs and unlimited reconnect with backoff.
     --no-config keeps playback independent of the user's mpv.conf.
-    Buffering is an application default, not configurable in 0.1.1.
+    Buffering is an application default, not configurable in 0.1.2.
 
 ENVIRONMENT / PROXY:
     HTTP_PROXY, HTTPS_PROXY, NO_PROXY and http_proxy, https_proxy, no_proxy.

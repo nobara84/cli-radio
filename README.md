@@ -1,6 +1,6 @@
 # cli-radio
 
-Version 0.1.1 focuses on buffering and playback reliability.
+Version 0.1.2 fixes proxy port normalization and proxy diagnostics.
 
 A lightweight terminal-based internet radio player for Linux, developed by
 **Markus Schneider**. The entire interface runs in your terminal using
@@ -246,6 +246,10 @@ The local mpv 0.41.0 manpage and
 [mpv environment documentation](https://mpv.io/manual/stable/#environment-variables)
 were checked; loopback tests verify HTTP proxy routing, HTTPS CONNECT and bypass.
 
+Proxy URLs passed to mpv always include an explicit port, including HTTP port 80.
+Diagnostics uses the playback resolver for the active or selected station (HTTPS
+proxy priority when no station exists), even before playback starts.
+
 Proxy credentials are URL-encoded in the child environment, rather than process
 arguments. They are excluded from normal logs, errors and UI; raw mpv output is
 discarded. Config credentials are plain text protected by 0600 permissions, and
@@ -275,7 +279,7 @@ depends on stream, server and network conditions.
 mpv runs with `--no-config`, so playback behavior does not depend on the user's
 `mpv.conf`. The application defaults are `--cache=yes`, `--cache-on-disk=no`,
 `--cache-pause=yes`, `--cache-pause-wait=2` and `--demuxer-readahead-secs=10`.
-Buffering is not user-configurable in 0.1.1. Longer stalls use the existing
+Buffering is not user-configurable in 0.1.2. Longer stalls use the existing
 watchdog and unlimited reconnect/backoff mechanism described below; the
 `--network-timeout=15` setting remains unchanged.
 

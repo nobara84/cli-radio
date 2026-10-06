@@ -300,6 +300,66 @@ mod tests {
     use super::*;
 
     #[test]
+    fn child_environment_preserves_execution_auth_and_removes_conflicts() {
+        use crate::network::Network;
+        use std::collections::HashMap;
+        for authenticated in [false, true] {
+            for configured in [false, true] {
+                let raw = if authenticated {
+                    "http://testuser:supersecret@proxy.example.test:80"
+                } else {
+                    "http://proxy.example.test:80"
+                };
+                let mut network = Network::default();
+                let mut env = HashMap::from([("NO_PROXY".into(), "localhost,127.0.0.1".into())]);
+                if configured {
+                    network.proxy = "http://proxy.example.test:80".into();
+                    if authenticated {
+                        network.proxy_username = "testuser".into();
+                        network.proxy_password = "supersecret".into();
+                    }
+                } else {
+                    env.insert("HTTPS_PROXY".into(), raw.into());
+                }
+                let proxy = network.resolve("https://radio", &env).unwrap();
+                let cmd = playback_command(&proxy, std::path::Path::new("/private/ipc"));
+                let child: HashMap<_, _> = cmd.as_std().get_envs().collect();
+                assert_eq!(
+                    child[std::ffi::OsStr::new("http_proxy")].unwrap(),
+                    proxy.url.as_deref().unwrap()
+                );
+                assert_eq!(
+                    child[std::ffi::OsStr::new("no_proxy")].unwrap(),
+                    "localhost,127.0.0.1"
+                );
+                for key in [
+                    "HTTP_PROXY",
+                    "HTTPS_PROXY",
+                    "https_proxy",
+                    "ALL_PROXY",
+                    "all_proxy",
+                    "NO_PROXY",
+                ] {
+                    assert!(child[std::ffi::OsStr::new(key)].is_none());
+                }
+                for arg in cmd.as_std().get_args() {
+                    assert!(!arg.to_string_lossy().contains("testuser"));
+                    assert!(!arg.to_string_lossy().contains("supersecret"));
+                }
+            }
+        }
+        let direct = Network::default()
+            .resolve("https://radio", &HashMap::new())
+            .unwrap();
+        let cmd = playback_command(&direct, std::path::Path::new("/private/ipc"));
+        assert!(
+            cmd.as_std()
+                .get_envs()
+                .any(|(k, v)| k == "http_proxy" && v.is_none())
+        );
+    }
+
+    #[test]
     fn launch_uses_explicit_memory_cache_and_ignores_user_config() {
         let cmd = playback_command(
             &Proxy {

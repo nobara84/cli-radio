@@ -389,15 +389,9 @@ fn diagnostics(frame: &mut Frame, app: &App) {
     frame.render_widget(block, area);
     let rows = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(inner);
     let now = Instant::now();
-    let proxy = app
-        .active
-        .as_ref()
-        .map(|s| app.config.network.resolve(&s.url, &app.environment));
-    // Only a fixed status label is exposed, never proxy URLs or environment values.
-    let proxy = match proxy {
-        Some(Ok(p)) if p.url.is_some() => "active (NO_PROXY may bypass)",
-        Some(Err(_)) => "invalid configuration",
-        _ => "inactive",
+    let proxy = match app.resolved_proxy() {
+        Ok(p) => p.status(),
+        Err(_) => "invalid configuration",
     };
     let mut lines = vec![
         format!("cli-radio {}", env!("CARGO_PKG_VERSION")),

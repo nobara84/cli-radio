@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Local-only PTY + actual mpv/null-audio integration smoke test. No internet."""
+import base64
 import fcntl
 import http.server
 import io
@@ -24,13 +25,29 @@ WORK.mkdir(parents=True, exist_ok=True)
 MPV = shutil.which('mpv')
 assert MPV, 'mpv is required'
 requests = []
+authenticated_requests = []
 lock = threading.Lock()
 
 class Stream(http.server.BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass
 
+    def proxy_authorized(self):
+        if 'radio.auth.invalid' not in self.path:
+            return True
+        expected = 'Basic ' + base64.b64encode(b'testuser:supersecret').decode()
+        if self.headers.get('Proxy-Authorization') != expected:
+            self.send_response(407)
+            self.send_header('Proxy-Authenticate', 'Basic realm="test"')
+            self.end_headers()
+            return False
+        with lock:
+            authenticated_requests.append(self.command + ' ' + self.path)
+        return True
+
     def do_GET(self):
+        if not self.proxy_authorized():
+            return
         with lock:
             requests.append(self.path)
         finite = '/finite' in self.path
@@ -59,6 +76,8 @@ class Stream(http.server.BaseHTTPRequestHandler):
             pass
 
     def do_CONNECT(self):
+        if not self.proxy_authorized():
+            return
         with lock:
             requests.append('CONNECT ' + self.path)
         self.send_response(502)
@@ -75,7 +94,7 @@ wrapper.write_text('#!/bin/sh\nexec ' + MPV + ' --ao=null "$@"\n')
 wrapper.chmod(0o700)
 
 class Radio:
-    def __init__(self, name, proxy=False, finite=False, bypass=False, missing=False):
+    def __init__(self, name, proxy=False, finite=False, bypass=False, missing=False, auth_source=None):
         self.base = WORK / name
         self.env = os.environ.copy()
         for key in list(self.env):
@@ -90,6 +109,14 @@ class Radio:
         config.mkdir(exist_ok=True)
         if proxy or bypass:
             (config / 'config.toml').write_text(f'volume = 85\n[network]\nproxy = "http://127.0.0.1:{port}"\nno_proxy = "' + ('127.0.0.1' if bypass else '') + '"\n')
+        if auth_source:
+            if auth_source == 'config':
+                (config / 'config.toml').write_text(
+                    f'[network]\nproxy = "http://127.0.0.1:{port}"\n'
+                    'proxy_username = "testuser"\nproxy_password = "supersecret"\n')
+            else:
+                value = f'http://testuser:supersecret@127.0.0.1:{port}'
+                self.env.update(http_proxy=value, https_proxy=value)
         self.master, self.slave = pty.openpty()
         fcntl.ioctl(self.slave, termios.TIOCSWINSZ, struct.pack('HHHH', 28, 100, 0, 0))
         self.before = termios.tcgetattr(self.slave)
@@ -103,6 +130,8 @@ class Radio:
             url = f'http://127.0.0.1:{port}/' + ('finite' if finite else 'live')
             if proxy:
                 url = 'http://radio.invalid/live'
+            if auth_source:
+                url = 'http://radio.auth.invalid/live'
             self.key('aSmoke Station\t' + url + '\r')
             self.wait(lambda: (self.base / 'data/cli-radio/stations.toml').exists() and 'Smoke Station' in (self.base / 'data/cli-radio/stations.toml').read_text(), 5)
         except BaseException:
@@ -289,6 +318,35 @@ try:
     r.close('SIGTERM')
     radios.remove(r)
     print('PASS: HTTP proxy routes stream, HTTPS uses CONNECT, SIGTERM cleanup')
+
+    for source in ('config', 'environment'):
+        start_auth = len(authenticated_requests)
+        r = Radio('auth-' + source + '-' + str(os.getpid()), auth_source=source)
+        radios.append(r)
+        r.key('\r')
+        r.wait(lambda: ' playing' in r.log())
+        assert any(p.startswith('GET http://radio.auth.invalid') for p in authenticated_requests[start_auth:])
+        child_env = Path(f'/proc/{r.child()}/environ').read_bytes().split(b'\0')
+        expected = f'http_proxy=http://testuser:supersecret@127.0.0.1:{port}/'.encode()
+        assert expected in child_env, 'mpv execution proxy lost credentials or port'
+        if source == 'environment':
+            parent_env = Path(f'/proc/{r.proc.pid}/environ').read_bytes().split(b'\0')
+            assert f'http_proxy=http://testuser:supersecret@127.0.0.1:{port}'.encode() in parent_env
+
+        r.key('i')
+        r.wait(lambda: 'Info / Diagnose' in r.screen() or 'Info / Diagnostics' in r.screen())
+        assert 'Proxy:' in r.screen()
+        assert b'testuser' not in r.output and b'supersecret' not in r.output
+        r.key('i')
+        r.key('e\t')
+        for _ in 'http://radio.auth.invalid/live':
+            r.key('\x7f')
+        r.key('https://radio.auth.invalid/live\r\r')
+        r.wait(lambda: any(p == 'CONNECT radio.auth.invalid:443' for p in authenticated_requests[start_auth:]))
+        assert 'testuser' not in r.log() and 'supersecret' not in r.log()
+        r.close('SIGTERM')
+        radios.remove(r)
+        print('PASS: authenticated ' + source + ' proxy HTTP playback and HTTPS CONNECT; no UI/log secrets')
 
     start = len(requests)
     r = Radio('bypass-' + str(os.getpid()), bypass=True)

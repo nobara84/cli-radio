@@ -828,3 +828,60 @@ fn diagnostics_localizes_runtime_uses_resolved_paths_and_never_exposes_proxy_sec
         }
     }
 }
+
+#[tokio::test]
+async fn loaded_proxy_matches_playback_and_diagnostics_before_and_after_start() {
+    for configured in [false, true] {
+        for authenticated in [false, true] {
+            let (mut app, mut receiver, temp) = fixture();
+            app.config.language = cli_radio::i18n::Language::English;
+            if configured {
+                let credentials = if authenticated {
+                    "proxy_username = \"testuser\"\nproxy_password = \"supersecret\"\n"
+                } else {
+                    ""
+                };
+                std::fs::write(app.store.config_dir.join("config.toml"), format!(
+                    "language = \"en\"\n[network]\nproxy = \"http://proxy.example.test:80\"\n{credentials}"
+                )).unwrap();
+                let (config, _) = app.store.load();
+                assert!(app.store.warnings.is_empty());
+                app.config = config;
+            } else {
+                let auth = if authenticated {
+                    "testuser:supersecret@"
+                } else {
+                    ""
+                };
+                app.environment.insert(
+                    "https_proxy".into(),
+                    format!("http://{auth}proxy.example.test:80"),
+                );
+            }
+            app.mode = Mode::Info;
+            for started in [false, true] {
+                if started {
+                    app.play().await;
+                    let Some(Control::Play { proxy, .. }) = receiver.recv().await else {
+                        panic!("missing play command")
+                    };
+                    assert_eq!(proxy.url, app.resolved_proxy().unwrap().url);
+                    let execution = proxy.url.as_ref().unwrap();
+                    assert!(execution.contains("proxy.example.test:80/"));
+                    assert_eq!(execution.contains("testuser:supersecret@"), authenticated);
+                }
+                let text = screen(&app, 140, 45);
+                assert!(text.contains("Proxy: active (NO_PROXY may bypass)"));
+                assert!(!text.contains("testuser"));
+                assert!(!text.contains("supersecret"));
+            }
+            let log = std::fs::read_to_string(temp.path().join("cli-radio.log")).unwrap();
+            assert!(!log.contains("testuser"));
+            assert!(!log.contains("supersecret"));
+            // With no stations, config/environment still has an informative status.
+            app.active = None;
+            app.stations.clear();
+            assert!(screen(&app, 140, 45).contains("Proxy: active"));
+        }
+    }
+}

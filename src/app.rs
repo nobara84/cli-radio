@@ -131,11 +131,20 @@ impl App {
         }
         false
     }
+    pub fn resolved_proxy(&self) -> Result<crate::network::Proxy, &'static str> {
+        let stream = self
+            .active
+            .as_ref()
+            .or_else(|| self.selected_station())
+            .map(|s| s.url.as_str())
+            .unwrap_or("https:");
+        self.config.network.resolve(stream, &self.environment)
+    }
     pub async fn launch(&mut self) {
         let Some(station) = &self.active else {
             return;
         };
-        match self.config.network.resolve(&station.url, &self.environment) {
+        match self.resolved_proxy() {
             Ok(proxy) => {
                 self.metadata = Metadata::default();
                 self.cache = crate::cache::Cache::default();
